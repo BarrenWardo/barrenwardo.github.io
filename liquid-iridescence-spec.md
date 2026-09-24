@@ -27,6 +27,10 @@ Revision 3's contract is now built. This revision records only what could not be
 | 4 | Measured frame time per tier | **Outstanding — needs the target machine and a browser.** Review-gated by §8, not CI-gated. | §0, §12 |
 | 5 | Contrast over rendered fluid pixels | **Outstanding — needs a browser.** The nominal-anchor table in §6.15 is the arithmetic pre-check, not this measurement. | §0, §12 |
 
+**What was verified, and how.** Both JS files pass `node --check`. A structural check of the eleven shader sources confirmed braces balance, every GLSL uniform is assigned in JS (34 names — a declared-but-unused uniform is an inactive location, and assigning it throws), every fragment varying is output by `VERT`, and uniform arrays are indexed in range. A headless load of the page (local server, `--headless=new`) reached a complete page with `nav-blend`, `js-reveal` and Lenis present, which means the whole fluid-era `main.js` path ran without throwing.
+
+**One defect came out of that probe, and it is fixed.** WebGL is unavailable in that headless configuration, so `Fluid.init("hero")` threw and the blob fallback took over — and it left `.fluid-scrim` in the DOM. Nothing else would have caught it: the fallback path keeps the blobs visible, but under a 72% white veil (light theme) the hero reads as a washed-out version of the fallback rather than the fallback. The scrim now leaves with the canvas it was built for, on all four paths where the hero canvas does not survive. Recorded here because the *next* person to trust a green checklist should know which path was exercised.
+
 **Import strategy — measured alternatives, so this is a decision and not a shrug.** Obligation 1's answer is worse than the cap, and three strategies were measured against each other:
 
 | Strategy | Served gzip | Requests | Note |
@@ -825,7 +829,7 @@ The old principle — *"animation must stay inside a strict performance budget (
 - [x] No new UI color token. No chromatic text, border, badge or fill anywhere.
 - [x] *(Added during implementation — §6.15's locked decision made concrete.)* The nav's difference blend is scoped by `html.nav-blend` to the hero's scroll range, with `html.nav-on-dark` giving the always-obsidian signal band white type in *both* themes. Without that second state the light theme would put black nav text on the black band, which §6.15 does not cover.
 
-**Manual checklist** (the accepted verification standard — eyeball each, in a real browser, on `git.barren.eu.org` after deploy). **Nothing here has been run yet.**
+**Manual checklist** (the accepted verification standard — eyeball each, in a real browser, on `git.barren.eu.org` after deploy). **Nothing here has been run yet**, and the probe above does not change that: it exercised the *fallback* path, because the test environment has no WebGL. Every item that requires a live sim — molten-silk character, the four anchors, ignition on lift, the couplings, the tier ladder, GLSL compiling on real hardware — is still owed.
 
 - [ ] **Hero, light theme:** liquid is visibly moving and reads as molten silk, not blobs. Four anchors all findable, blue unmistakable. Hero name and tagline clearly legible at the brightest moment of a full loop.
 - [ ] **Hero, dark theme:** the deep palette reads nocturnal and cooler; amber is largely absent; white type legible throughout.
