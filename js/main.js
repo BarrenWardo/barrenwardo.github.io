@@ -93,7 +93,7 @@
   /* The only entry point that may create the hero sim — guarded, so boot
      completion, a skip, and a late module can all call it harmlessly. */
   function startHeroFluidOnce() {
-    if (heroFluidStarted || !window.Fluid || window.Fluid.status !== "ready") return;
+    if (heroFluidStarted || !window.Fluid) return;
     heroFluidStarted = true;
     window.Fluid.init("hero", {});
   }
@@ -102,7 +102,7 @@
      opaque boot overlay, where a 3s window would already have expired (spec §3). */
   function beginFluidWindow() {
     if (fluidCommitted) return;
-    if (window.Fluid && window.Fluid.status === "ready") {
+    if (window.Fluid) {
       startHeroFluidOnce();
       return;
     }
@@ -175,7 +175,7 @@
   }
 
   function startEchoFluidOnce() {
-    if (echoFluidStarted || !window.Fluid || window.Fluid.status !== "ready") return;
+    if (echoFluidStarted || !window.Fluid) return;
     echoFluidStarted = true;
     window.Fluid.init("echo", { quality: "low" });
   }
