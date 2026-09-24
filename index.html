@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -17,13 +17,13 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" media="print" onload="this.media='all'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap"></noscript>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Raleway:wght@400&family=JetBrains+Mono:wght@400&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Raleway:wght@400&family=JetBrains+Mono:wght@400&display=swap"></noscript>
   <script>
   (function () {
     try {
       var t = localStorage.getItem("theme");
-      if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
       document.documentElement.dataset.theme = t;
       if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
         document.documentElement.classList.add("boot");
@@ -41,6 +41,7 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
+  <nav class="site-nav" aria-label="Sections"><a class="wordmark" href="#top">barren wardo</a><div class="site-links"><a href="#orbit">Toolkit</a><a href="#signals">Signals</a><a href="#projects">Work</a><a href="#contact">Contact</a></div></nav>
   <div class="progress-bar" aria-hidden="true"></div>
 
   <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light and dark theme" aria-pressed="false">
@@ -73,7 +74,6 @@
 
   <header class="hero" id="top">
     <div class="hero-inner">
-      <p class="eyebrow">git.barren.eu.org</p>
       <h1 class="hero-name" id="hero-name" tabindex="-1">Barren Wardo</h1>
       <p class="tagline" id="tagline">AI aficionado. Forever evolving.</p>
 
@@ -97,7 +97,7 @@
       </div>
 
       <a class="scroll-cue" href="#orbit" aria-label="Scroll to tech stack">
-        <span aria-hidden="true"></span>
+        <svg class="scroll-badge" width="76" height="76" viewBox="0 0 76 76" aria-hidden="true"><defs><path id="scroll-circle" d="M38,38 m-26,0 a26,26 0 1,1 52,0 a26,26 0 1,1 -52,0"/></defs><text><textPath href="#scroll-circle" textLength="163" lengthAdjust="spacingAndGlyphs">SCROLL DOWN · SCROLL DOWN · </textPath></text></svg>
       </a>
     </div>
   </header>
@@ -105,8 +105,8 @@
   <main id="main">
     <section class="orbit" id="orbit" aria-labelledby="orbit-heading">
       <div class="section-inner">
-        <p class="eyebrow">Tech stack</p>
         <h2 id="orbit-heading">Orbiting toolkit</h2>
+        <p class="section-meta">12 modules · ring answers to scroll velocity</p>
         <div class="orbit-stage" id="orbit-stage">
           <div class="orbit-core" aria-hidden="true"><span>BW</span></div>
           <div class="orbit-ring" aria-hidden="true"></div>
@@ -130,8 +130,8 @@
 
     <section class="signals" id="signals" aria-labelledby="signals-heading">
       <div class="section-inner">
-        <p class="eyebrow">Live from GitHub</p>
         <h2 id="signals-heading">Signal board</h2>
+        <p class="section-meta">live · api.github.com · 12h cache</p>
         <div class="signal-grid" id="signal-grid">
           <article class="signal-card" data-reveal aria-label="Original repositories: 12">
             <p class="signal-value"><span class="counter" data-counter data-key="originals">12</span></p>
@@ -154,20 +154,20 @@
 
     <section class="projects" id="projects" aria-labelledby="projects-heading">
       <div class="section-inner">
-        <p class="eyebrow">Proof of work</p>
         <h2 id="projects-heading">Projects</h2>
+        <p class="section-meta">3 pinned · sorted by stars</p>
         <div class="project-grid" id="project-grid">
-          <article class="project-card" data-reveal style="--card-accent: var(--accent)">
+          <article class="project-card" data-reveal>
             <h3><a href="https://github.com/BarrenWardo/Fooocus-Modal">Fooocus-Modal</a></h3>
             <p class="project-desc">Fooocus App deployment using Modal.</p>
             <p class="project-meta"><span>Python</span><span aria-label="14 stars">★ 14</span></p>
           </article>
-          <article class="project-card" data-reveal style="--card-accent: var(--accent-2)">
+          <article class="project-card" data-reveal>
             <h3><a href="https://github.com/BarrenWardo/Py-Books">Py-Books</a></h3>
             <p class="project-desc">Jupyter Notebook collection — Python practice, notes and experiments.</p>
             <p class="project-meta"><span>Jupyter Notebook</span><span aria-label="6 stars">★ 6</span></p>
           </article>
-          <article class="project-card" data-reveal style="--card-accent: var(--accent-3)">
+          <article class="project-card" data-reveal>
             <h3><a href="https://github.com/BarrenWardo/kserve-skills">kserve-skills</a></h3>
             <p class="project-desc">KServe Skills</p>
             <p class="project-meta"><span>Markdown</span></p>
@@ -178,7 +178,6 @@
 
     <section class="contact" id="contact" aria-labelledby="contact-heading">
       <div class="section-inner">
-        <p class="eyebrow">Call to action</p>
         <h2 id="contact-heading" data-reveal-heading>Let&rsquo;s build something.</h2>
         <div class="cta-row">
           <a class="btn btn-primary" href="https://github.com/BarrenWardo" rel="noopener">GitHub</a>
@@ -189,7 +188,7 @@
   </main>
 
   <footer class="footer">
-    <p>© <span id="year">2026</span> BarrenWardo · built with GSAP · try: help</p>
+    <p class="footer-lines"><span>© <span id="year">2026</span> BarrenWardo</span><span>built with GSAP</span><span>try: help</span></p>
   </footer>
 
   <noscript>

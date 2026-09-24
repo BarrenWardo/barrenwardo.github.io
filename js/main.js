@@ -486,15 +486,15 @@
       if (running && visible && dots.length) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         const theme = document.documentElement.dataset.theme;
-        ctx.fillStyle = theme === "light" ? "rgba(37,99,235,0.55)" : "rgba(139,155,180,0.7)";
+        ctx.fillStyle = theme === "light" ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.55)";
         dots.forEach((d) => {
           if (particleMode === "hyperdrive") {
             d.sy = (d.sy || 0) + 0.9;
             ctx.fillRect(d.x * canvas.width, ((d.y * canvas.height + d.sy * 20) % canvas.height + canvas.height) % canvas.height, 1.5, 8 + d.sy);
           } else if (particleMode === "matrix") {
-            ctx.fillStyle = theme === "light" ? "rgba(21,128,61,0.8)" : "rgba(74,222,128,0.8)";
+            ctx.fillStyle = theme === "light" ? "rgba(0,0,0,0.75)" : "rgba(255,255,255,0.8)";
             ctx.fillRect(d.x * canvas.width, (d.y * canvas.height) % canvas.height, 2, 6);
-            ctx.fillStyle = theme === "light" ? "rgba(37,99,235,0.55)" : "rgba(139,155,180,0.7)";
+            ctx.fillStyle = theme === "light" ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.55)";
           } else {
             ctx.beginPath();
             ctx.arc(d.x * canvas.width, d.y * canvas.height, d.r, 0, Math.PI * 2);
