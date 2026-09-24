@@ -1232,6 +1232,11 @@ function init(instance, opts) {
     });
     instances[name] = inst;
     if (name === "hero") {
+      // Optimistic default: the hero is on screen when the sim is born, and the
+      // ScrollTrigger toggle may have fired before the instance existed.
+      // Visibility discipline (§4) corrects this on the next toggle.
+      inst.visible = true;
+      inst.running = !inst.reduced && inst.status === "ready";
       // Pointer drive lives here: the canvas is pointer-events:none, so the
       // listener must be on window (spec §6.4).
       if (isFinePointer() && !isReduced()) {

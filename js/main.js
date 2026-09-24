@@ -104,6 +104,7 @@
     if (fluidCommitted) return;
     if (window.Fluid) {
       startHeroFluidOnce();
+      initFluidVisibility();   // module was already here: install pausing now
       return;
     }
     fluidDeadline = performance.now() + 3000;
