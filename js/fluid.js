@@ -587,21 +587,30 @@ class FluidInstance {
 
   /* One Program per pass (spec §6.1), all sharing ONE fullscreen Triangle. Each
    * program gets its own Mesh — OGL resolves the program through the mesh during
-   * render, so swapping `mesh.program` after construction is not a supported path. */
+   * render, so swapping `mesh.program` after construction is not a supported path.
+   * OGL does NOT populate `program.uniforms` from the compiled source: every
+   * uniform written later MUST be declared here, or the first write throws. */
   buildPrograms() {
     const gl = this.gl;
     const geometry = new Triangle(gl);
-    const P = (fragment) => new Program(gl, { vertex: VERT, fragment, depthTest: false, depthWrite: false });
-    this.clearProg = P(FRAG_CLEAR);
-    this.splatProg = P(FRAG_SPLAT);
-    this.advectProg = P(FRAG_ADVECTION);
-    this.divergenceProg = P(FRAG_DIVERGENCE);
-    this.curlProg = P(FRAG_CURL);
-    this.vorticityProg = P(FRAG_VORTICITY);
-    this.pressureProg = P(FRAG_PRESSURE);
-    this.gradientProg = P(FRAG_GRADIENT_SUBTRACT);
-    this.seedProg = P(FRAG_SEED);
-    this.displayProg = P(FRAG_DISPLAY);
+    const P = (fragment, names) => {
+      const uniforms = {};
+      for (const n of names) { uniforms[n] = { value: null }; }
+      return new Program(gl, { vertex: VERT, fragment, uniforms, depthTest: false, depthWrite: false });
+    };
+    this.clearProg = P(FRAG_CLEAR, ["uTexture", "uValue", "uTexel"]);
+    this.splatProg = P(FRAG_SPLAT, ["uTarget", "uAspect", "uColor", "uPoint", "uRadius", "uTexel"]);
+    this.advectProg = P(FRAG_ADVECTION, ["uVelocity", "uSource", "uTexel", "uVelocityTexel", "dt"]);
+    this.divergenceProg = P(FRAG_DIVERGENCE, ["uVelocity", "uTexel"]);
+    this.curlProg = P(FRAG_CURL, ["uVelocity", "uTexel"]);
+    this.vorticityProg = P(FRAG_VORTICITY, ["uVelocity", "uCurl", "uCurlStrength", "dt", "uTexel"]);
+    this.pressureProg = P(FRAG_PRESSURE, ["uPressure", "uDivergence", "uTexel"]);
+    this.gradientProg = P(FRAG_GRADIENT_SUBTRACT, ["uPressure", "uVelocity", "uTexel"]);
+    this.seedProg = P(FRAG_SEED, ["uSeed", "uTexel"]);
+    this.displayProg = P(FRAG_DISPLAY, ["uTexture",
+      "uA0", "uA1", "uA2", "uA3", "uB0", "uB1", "uB2", "uB3",
+      "uMix", "uBloom", "uTintColor", "uTintAmount",
+      "uLumFloor", "uLumCeil", "uSatMax", "uDither", "uTexel"]);
 
     this.meshes = new Map();
     [this.clearProg, this.splatProg, this.advectProg, this.divergenceProg, this.curlProg,
@@ -657,6 +666,15 @@ class FluidInstance {
     this.simTexel = new Vec2(1 / sim.w, 1 / sim.h);
     this.denTexel = new Vec2(1 / den.w, 1 / den.h);
     this.velTexel = new Vec2(1 / sim.w, 1 / sim.h);
+    // VERT declares uTexel in every program: give each its grid's texel now so
+    // no active uniform is ever unsupplied (the advection pass overrides its
+    // own per frame; display ignores the neighbor varyings but declares them).
+    for (const pr of [this.clearProg, this.splatProg, this.divergenceProg, this.curlProg,
+        this.vorticityProg, this.pressureProg, this.gradientProg, this.seedProg]) {
+      if (pr && pr.uniforms.uTexel) { pr.uniforms.uTexel.value = this.simTexel; }
+    }
+    if (this.advectProg && this.advectProg.uniforms.uTexel) { this.advectProg.uniforms.uTexel.value = this.simTexel; }
+    if (this.displayProg && this.displayProg.uniforms.uTexel) { this.displayProg.uniforms.uTexel.value = this.denTexel; }
 
     if (!initial) { this.disposeTargets(); }
     this.velocity = createDoubleFBO(gl, sim.w, sim.h, this.simFmt);
@@ -1247,9 +1265,14 @@ function init(instance, opts) {
     observeResize(inst);
     window.dispatchEvent(new CustomEvent("fluid:first-frame", { detail: { instance: name } }));
   } catch (err) {
-    /* No canvas was created, so the scrim ensureScrim() just added would sit
-       alone over the blob wash. Removed synchronously, before paint. */
+    /* Never swallow the reason: a silent catch here once hid a startup failure
+       behind the blob fallback with nothing in the console to find. */
+    try { console.warn("fluid: " + name + " init failed, using blob fallback", err); } catch (e) { /* noop */ }
     lastFailure = "unsupported";
+    if (container) {
+      container.querySelectorAll(".fluid-canvas:not(.is-live), .fluid-echo:not(.is-live)")
+        .forEach((c) => { if (c.parentNode) { c.parentNode.removeChild(c); } });
+    }
     if (name === "hero") { removeScrim(); }
     window.dispatchEvent(new CustomEvent("fluid:fallback", { detail: { instance: name, reason: "unsupported" } }));
     return null;
