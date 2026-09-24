@@ -1,6 +1,6 @@
 # Spec — Liquid Iridescence (real-time WebGL fluid) for git.barren.eu.org
 
-**Status:** Revision 2 — buildable (nothing implemented yet)
+**Status:** Revision 3 — buildable (nothing implemented yet)
 **Date:** 2026-09-24
 **Repo:** `BarrenWardo/barrenwardo.github.io` (branch `main`, GitHub Pages, no build step)
 **Live domain:** `git.barren.eu.org` (via `CNAME` — untouched)
@@ -14,6 +14,27 @@
 ---
 
 ## Change log
+
+### Revision 3 — second multi-angle review corrections
+
+A four-agent review (baseline verification against `index.html` / `css/style.css` / `js/main.js`, WebGL/OGL implementability, load-order + performance + accessibility + contrast, internal consistency + docs + design) of Revision 2 found twenty-six further defects. **Interview decisions are unchanged** — corrections only.
+
+| # | Revision 2 defect | Class | Fix | § |
+|---|---|---|---|---|
+| 1 | Blob drift quoted as 18–40s; code is `18 + i*6` = **18–36s**. Signature transitions quoted as 0.8s–1.25s; no 1.25s exists in `style.css`. Line numbers drifted throughout §0. | Factual errors | Corrected (§0). | §0 |
+| 2 | §12 checkbox "JS disabled: blob wash" contradicts §0/§7/§13 and the shipped `<noscript>` rule (hero is plain `var(--bg)`). | Internal contradiction | Checkbox corrected to plain hero. | §12 |
+| 3 | Readiness sketch leaked the `fluid:ready` listener past the deadline, allowing the forbidden late swap; 3s deadline anchored to `main.js` init expires under the boot overlay. | Load-order bug | Named handler + teardown on both arms + `committed` guard; deadline anchored to `heroReveal()` (reveal + 3s). Never add `async` to either script. | §3 |
+| 4 | `Fluid.init("hero", …)` signature and double-init guard asserted but never defined. | Unspecified behaviour | Normative `heroFluidStarted` guard + `init(instance, opts)` + `status` enum + full `window.Fluid` IDL. | §3, §6.14 |
+| 5 | OGL float recipe unimplementable ("RGBA16F" is not a constructor arg); depth buffers, `HALF_FLOAT_OES`, filtering, aspect derivation, two-resolution advection, one-Program-per-pass, dissipation time-base, splat units, alpha/compositing all missing. | Unimplementable spec | Full constructor recipes, `depth:false`, LINEAR-everywhere, aspect math, per-pass programs, `pow(base, dt)` dissipation, aspect-corrected splat units, opaque renderer. | §6.1 |
+| 6 | Energy readback targets a half-float surface (unreadable); 1×1 reduction in one pass unspecified; `RESEED_FLOOR` unitless; extra pass every frame contradicts §8. | Technical error | 1×1 target is RGBA8/UNSIGNED_BYTE; reduction runs only on sample frames; CPU accumulator is the default with readback opt-in; floor units defined. | §6.6 |
+| 7 | "Two instances never on screen together" false during scroll transitions; 90-frame probe start undefined; DPR-0.75 path unnamed; `destroy()` semantics missing. | Wrong assumption / gaps | Combined-load watchdog rule; probe starts after first presented frame post-lift, first 10–20 frames excluded; OGL `setSize` named; `destroy()` defined. | §6.10 |
+| 8 | §6.11 cites `getContext()` failure after §6.1 established OGL owns creation; `preventDefault` + "never restore" unexplained; shared-rAF stop ambiguous; echo fallback and `status` values undefined. | Contradiction / gaps | Failure = thrown `Renderer` constructor / `isContextLost()`; `preventDefault` kept only to suppress default blanking during cross-fade; per-instance `visible=false`; echo = fade canvas to 0, pause, leave obsidian; status enum defined. | §6.11 |
+| 9 | Resize "one wide splat" leaves an empty field; tier frozen across orientation change; bloom start contradicts Risk 2; reduced-motion "re-render on visibility" over-specified. | Gaps | Mini-reseed (4–6 splats) on resize when running; one re-probe allowed on >25% pixel jump; `uBloom` starts after first submit, echo exempt; frozen = redisplay on visibility, re-seed only on resize/theme. | §4, §6.2, §6.12 |
+| 10 | Fixed scrim cannot stay headline-centred while scrolling; echo has no scrim (unstated); `.fluid-scrim` element origin never specified; `#cursor-glow` still in §4 stack after retirement. | Internal contradictions | Centring valid at `scrollY≈0`; echo relies on obsidian + 0.5 opacity (stated); scrim div is JS-created sibling (specified); cursor-glow removed from table. | §4, §6.3, §6.7 |
+| 11 | Echo deep palette unreadable in light theme; `--muted-on-fluid` used but never declared; "lifted versions" false for 3/4 anchors. | Gaps / factual error | Theme-invariant `--media-*-deep` tokens; provisional `--muted-on-fluid` pair; reworded lift claim. | §5.4, §6.7 |
+| 12 | Scroll velocity + reveal impulses double-inject; amplitudes qualitative; keystroke predicate undefined; shared wipe constant across script boundary undefined; interrupted-ramp restart unimplementable; bloom/crossfade overlap; `matrix` stir/tint clocks conflict; tint-vs-theme composition undefined. | Gaps | Single batched splat pass with cap + priority-drop; provisional ranges; `e.key.length===1 && !meta/ctrl/alt` predicate; `window.THEME_WIPE` named; interrupt lerp formula; tint is overlay uniform; `matrix = stir(6s) + tint(5s)`. | §6.4, §6.9, §6.14 |
+| 13 | Edge-fade method + full-bleed technique unspecified (CLS claim unprovable); forced-colors, focus ring, flash-rate, per-instance failure, RGBA8 fallback, pre-ready theme toggle rows missing; budget unenforceable; checklist overreach (console errors, cobalt-only nav, "no blob flash"). | Gaps | Overlay-only fade + full-bleed pattern; forced-colors hide rule; focus/flash checks; new degradation rows; budget labelled review-gated with numeric caps; checklist corrected. | §6.3, §7, §8, §9, §12 |
+| 14 | `index.html` noscript/scrim change and this spec's own measurement record unowned in §10; `gsap-animated-profile-spec.md` list partial; normative MUST/SHOULD, constants table, resize-vs-pause, batching cap unspecified. | Gaps | §10 extended; constants table added (§6.1); resize gated on running; batch cap 8 with drop order; RFC-keyword convention added. | §10, §6.1 |
 
 ### Revision 2 — multi-angle review corrections
 
@@ -71,26 +92,26 @@ A technical, internal-consistency, accessibility and feasibility review of Revis
 
 ## 0. Verified baseline
 
-Read from the repository, the npm/jsDelivr registry and OGL's own repository on 2026-09-24 — measured, not assumed. Line numbers refer to the files as they stand at Revision 2.
+Read from the repository, the npm/jsDelivr registry and OGL's own repository on 2026-09-24 — measured, not assumed. Line numbers refer to the files as they stand at Revision 3 (`index.html` 22–33/35–40/52–63/65–73/194–198; `css/style.css` 11/97–101/128–145/342–347; `js/main.js` 416–436/448–518/536–549).
 
 | Fact | Value | Source |
 |---|---|---|
-| Existing ambient implementation | 4 `div.blob`, pre-blurred `radial-gradient`, `will-change: transform`, GSAP yoyo `x`/`y`/`scale`, 18–40s, `sine.inOut`, `repeatRefresh` | `css/style.css` 127–137, `js/main.js` `initAmbient()` |
-| Blob containment | `.ambient { position: fixed; inset: 0; z-index: 0 }`; `main` + `.footer` opaque `var(--bg)`; `.hero` transparent | `css/style.css` 126, 141–143 |
+| Existing ambient implementation | 4 `div.blob`, pre-blurred `radial-gradient`, `will-change: transform`, GSAP yoyo `x`/`y`/`scale`, 18–36s (`18 + i*6`), `sine.inOut`, `repeatRefresh` | `css/style.css` 129–137, `js/main.js` 417–423 |
+| Blob containment | `.ambient { position: fixed; inset: 0; z-index: 0 }`; `main` + `.footer` opaque `var(--bg)`; `.hero` transparent | `css/style.css` 128, 143–145 |
 | Dark theme handling today | `:root[data-theme="dark"] .blob { opacity: 0.55 }` | `css/style.css` 137 |
-| Particle canvas | 2D, 24 dots desktop / 12 mobile, `drift` + `hyperdrive` + `matrix` modes | `js/main.js` 448–517 |
-| Cursor glow | currently `display: none` in CSS, only optionally wired | `css/style.css` 138, `js/main.js` 425–440 |
-| Grain layer | currently `display: none` in CSS | `css/style.css` 139 |
-| Pinned third-party scripts | GSAP 3.15.0 (`gsap`, `ScrollTrigger`, `SplitText`, `ScrambleTextPlugin`) + Lenis 1.3.26, all `defer`, all with `sha384` integrity | `index.html` 36–40 |
+| Particle canvas | 2D, 24 dots desktop / 12 mobile, `drift` + `hyperdrive` + `matrix` modes | `js/main.js` 448–518 |
+| Cursor glow | currently `display: none` in CSS, only optionally wired | `css/style.css` 139, `js/main.js` 426–436 |
+| Grain layer | currently `display: none` in CSS | `css/style.css` 140 |
+| Pinned third-party scripts | GSAP 3.15.0 (`gsap`, `ScrollTrigger`, `SplitText`, `ScrambleTextPlugin`) + Lenis 1.3.26, all `defer`, all five vendor URLs with `sha384` integrity (`js/main.js` itself correctly has none) | `index.html` 35–40 |
 | Measured third-party payload today | ~57 KB gzip | `gsap-animated-profile-spec.md` §0 |
-| Theme wipe | fixed `.theme-wipe` div, `clip-path: circle(var(--reveal) at var(--ox) var(--oy))`, animated **0.7s `power3.inOut`**; `data-theme` flips *before* the wipe animates; painted from hardcoded `#050810` / `#f3f6ff` — **the retired aurora palette, not the current `var(--bg)`** | `css/style.css` 101–104, `js/main.js` 532–550 |
-| Signature ease | `cubic-bezier(0.19, 1, 0.22, 1)` as `--ease`; transitions at 0.8s–1.25s | `css/style.css` 11, 21 |
+| Theme wipe | fixed `.theme-wipe` div, `clip-path: circle(var(--reveal) at var(--ox) var(--oy))`, animated **0.7s `power3.inOut`**; `data-theme` flips *before* the wipe animates; painted from hardcoded `#050810` / `#f3f6ff` — **the retired aurora palette, not the current `var(--bg)`** | `css/style.css` 97–101, `js/main.js` 536–549 (paint 538, flip 543, ease 546) |
+| Signature ease | `cubic-bezier(0.19, 1, 0.22, 1)` as `--ease`; transitions at 0.8s | `css/style.css` 11, 20 |
 | `ogl` latest | **1.0.11**, **The Unlicense** (public domain — no attribution obligation, and no provenance signal either), entrypoint `/src/index.min.js` (**ESM**) | jsDelivr package API, OGL README |
 | `ogl` size (author-reported) | Core 8 KB, Math 6 KB, Extras 15 KB — **total 29 KB minzipped** for the entire package; this build imports a subset | OGL README size table |
 | `ogl` exports used here | `Renderer`, `Program`, `Mesh`, `RenderTarget` (core); `Triangle` (extras, 382 B); `Vec2` (math) — all confirmed present in 1.0.11 | jsDelivr package file listing |
 | `ogl@1.0.11/+esm` | Resolves **HTTP 200**, served as `application/javascript; charset=utf-8` — the module will parse | Verified 2026-09-24 |
 | `three` latest | 0.186.1 (rejected — see §2) | jsDelivr package API |
-| Boot overlay | opaque, `display: none` unless `html.boot`, set pre-paint, ~4–5s, skippable from 0.15s | markup `index.html` 52–62, `js/main.js` boot section |
+| Boot overlay | opaque, `display: none` unless `html.boot`, set pre-paint, ~4–5s, skippable from 0.15s | markup `index.html` 52–63, `js/main.js` boot section |
 | Inline pre-paint script | sets `data-theme` and (unless reduced motion) `html.boot`; the reduced-motion check is line 28 | `index.html` 22–33 |
 | Ambient layer markup | `.ambient` holds the 4 blobs, `#particles` and `#cursor-glow`; `.grain` is a sibling | `index.html` 65–73 |
 | Reduced motion today | `html.boot` never set; all GSAP timelines skipped; **blobs stay visible but static**; CSS kills every animation and transition globally | `index.html` 28, `css/style.css` 342–347, `js/main.js` `isReduced()` |
@@ -179,23 +200,41 @@ Every normative choice traces to one of these. "Why" is the reasoning that must 
   ```
   - *Why the module sits **after** `main.js` and not before it:* both classic `defer` scripts and module scripts are deferred, and deferred scripts **execute in document order** — so a module placed before `main.js` must finish fetching and evaluating its entire remote import graph before `main.js` runs at all. `main.js` owns the boot choreography, the hero reveal and the LCP path; making any of that wait on a third-party CDN fetch would reintroduce exactly the render-blocking dependency §6.1 of the original build spec went to great lengths to remove. Placed last, the module loads in parallel and `main.js` starts immediately. The readiness contract below is what absorbs the resulting asynchrony.
   - The consequence is real and must be handled rather than wished away: `window.Fluid` **will not exist** when `main.js` first runs. Nothing in `main.js` may assume otherwise.
-- **Readiness contract (the load-order trap).** `fluid.js` may fail — CDN blocked, MIME wrong, OGL broken, no WebGL. `main.js` must therefore never assume `window.Fluid` exists, and with the module placed last it genuinely will not exist yet when `main.js` first runs:
+- **Readiness contract (the load-order trap).** `fluid.js` may fail — CDN blocked, MIME wrong, OGL broken, no WebGL. `main.js` must therefore never assume `window.Fluid` exists, and with the module placed last it genuinely will not exist yet when `main.js` first runs. Never add `async` to either script — it breaks document order:
   ```js
   // fluid.js, last statement:
   window.Fluid = { init, stir, tint, setTheme, freeze, destroy, status };
   window.dispatchEvent(new Event("fluid:ready"));
-  // main.js, at init:
-  //   const deadline = performance.now() + 3000;
-  //   if (window.Fluid) onFluidReady(); else addEventListener("fluid:ready", once);
+  // main.js — normative shape (named handler, teardown on both arms):
+  //   let fluidCommitted = false, fluidDeadline = 0, heroFluidStarted = false;
+  //   function onFluidReady() {
+  //     if (fluidCommitted) return;
+  //     fluidCommitted = true;
+  //     window.removeEventListener("fluid:ready", onFluidReady);
+  //     startHeroFluidOnce();
+  //   }
+  //   function startHeroFluidOnce() {
+  //     if (heroFluidStarted || !window.Fluid) return;
+  //     heroFluidStarted = true;
+  //     window.Fluid.init("hero", {});
+  //   }
+  //   // at heroReveal(): fluidDeadline = performance.now() + 3000;
+  //   //   if (window.Fluid && Fluid.status === "ready") startHeroFluidOnce();
+  //   //   else window.addEventListener("fluid:ready", onFluidReady, { once: true });
+  //   //   setTimeout(() => {
+  //   //     if (fluidCommitted) return;
+  //   //     fluidCommitted = true;
+  //   //     window.removeEventListener("fluid:ready", onFluidReady);
+  //   //   }, <ms remaining until fluidDeadline>);
   ```
-  A module that never loads fires no event — hence the deadline, not just the listener.
-- **Resolution rule — the one place a blob→fluid handoff is allowed.** When `heroReveal()` runs (boot completion, or a skip 0.15s in), decide once:
-  1. If `window.Fluid` exists and `status` is viable → initialise the sim now.
-  2. Else if the deadline has not passed → leave the blob wash **visible and animated** as the interim state, and keep waiting. If `fluid:ready` arrives before the deadline, initialise then and cross-fade the blobs out over 0.6s (the same mechanism, reversed, as §6.11's fallback).
-  3. Else → commit to the blob path **permanently for this page load**, and remove the listener.
+  A module that never loads fires no event — hence the deadline, not just the listener. `status` is one of `"pending" | "ready" | "unsupported" | "lost" | "destroyed"`.
+- **Resolution rule — the one place a blob→fluid handoff is allowed.** When `heroReveal()` runs (boot completion, or a skip 0.15s in), set `fluidDeadline = performance.now() + 3000` and decide once:
+  1. If `window.Fluid` exists and `status === "ready"` → `startHeroFluidOnce()` now.
+  2. Else → leave the blob wash **visible and animated** as the interim state, and keep waiting. If `fluid:ready` arrives before the deadline, `onFluidReady()` initialises then and cross-fades the blobs out over 0.6s (the same mechanism, reversed, as §6.11's fallback).
+  3. Else (deadline expires first) → commit to the blob path **permanently for this page load**: set `fluidCommitted = true` and `removeEventListener("fluid:ready", onFluidReady)` so a late module can never swap the media layer.
 
   *Why a deadline rather than "wait for it":* a skip can land at 0.15s, long before a cold CDN fetch completes; waiting indefinitely would leave a blank, undecided hero. *Why permanently:* the alternative — swapping the media layer in at an arbitrary later moment — is a visible change of weather the visitor did not ask for.
-- **The hero canvas lives inside the existing `.ambient` layer**, which means the existing `<noscript>` rule (`index.html` 194–198) hides it on the no-JS path for free. Add `.fluid-scrim` to that same rule. Do not create a new top-level container for the hero fluid.
+- **The hero canvas lives inside the existing `.ambient` layer**, which means the existing `<noscript>` rule (`index.html` 194–198) hides it on the no-JS path for free. The scrim div is created by `fluid.js` as a sibling of `.ambient` (not inside it), so `.fluid-scrim` MUST be added to that same `<noscript>` hide rule. Do not create a new top-level container for the hero fluid.
 - **Unchanged:** `README.md`, `_config.yml`, `CNAME`, `.nojekyll`, the GSAP/Lenis pins and their SRI hashes, the CDN-first (no local vendor) policy, and the "own files only" file list — now five: `index.html`, `css/style.css`, `js/main.js`, `js/fluid.js`, `favicon.svg`.
 
 ---
@@ -206,24 +245,27 @@ The stack, using the **real z-index values already in the build**. The two new p
 
 | z-index | Layer | Implementation | New? |
 |---|---|---|---|
-| 0 | `.ambient` (fixed, `inset: 0`, `overflow: hidden`, `pointer-events: none`) | hero `canvas.fluid-canvas`, the 4 `.blob` divs, `#particles`, `#cursor-glow` — **all siblings inside one layer**. The fluid canvas and the blobs are mutually exclusive: whichever is live, the other is `display: none`. | canvas is new |
-| 1 | `.fluid-scrim` (fixed, `inset: 0`, `pointer-events: none`) | theme-aware radial scrim + vignette (§6.7, §6.8) | new |
+| 0 | `.ambient` (fixed, `inset: 0`, `overflow: hidden`, `pointer-events: none`) | hero `canvas.fluid-canvas`, the 4 `.blob` divs, `#particles` — **all siblings inside one layer** (`#cursor-glow` is removed by §6.13 and MUST NOT appear here). The fluid canvas and the blobs are mutually exclusive: whichever is live, the other is `display: none`. | canvas is new |
+| 1 | `.fluid-scrim` (fixed, `inset: 0`, `pointer-events: none`, created by `fluid.js` as a sibling of `.ambient`, `aria-hidden="true"`) | theme-aware radial scrim + vignette (§6.7, §6.8). Centring on the headline is viewport centring valid at `scrollY≈0`; it does not track the hero while scrolling. | new |
 | 2 | Content | `.hero`, `main`, `.footer` — unchanged containment: `main`/`.footer` are opaque `var(--bg)`, `.hero` is transparent. **These opaque backgrounds are what contain the wash (and the scrim) to the hero** — they are load-bearing, not decorative. | unchanged |
 | 2 (local) | Echo instance | `canvas.fluid-echo` absolutely positioned inside the obsidian signal band, clipped by it. It is *inside* the content layer, not in the global stack, so the band's own content paints above it locally. | new |
 | 95–200 | Fixed chrome | nav 95 (difference blend), theme-wipe 110, progress bar 120, theme toggle 130, boot overlay 150, skip link 200 | unchanged |
 
-**Canvas sizing.** CSS gives both canvases `position: absolute; inset: 0; width: 100%; height: 100%`. The **drawing buffer** is sized `clientWidth × tier DPR cap` (§6.10) and the **simulation FBOs** are sized from the sim resolution — three different resolutions, deliberately. Never size the solver from the display buffer.
+**Canvas sizing.** CSS gives both canvases `position: absolute; inset: 0; width: 100%; height: 100%`. The **drawing buffer** is sized via OGL `renderer.setSize(clientWidth, clientHeight)` with `renderer.dpr` capped per tier (§6.10) — never by writing `canvas.width` directly — and the **simulation FBOs** are sized from the sim resolution with aspect derivation (§6.1) — three different resolutions, deliberately. Never size the solver from the display buffer.
 
-**Resize handling.** Use a `ResizeObserver` on each canvas's parent (not `window.resize` alone — the signal band can change height without the window changing). On resize: reallocate the simulation targets, then **immediately fire one wide splat** before the next render. A resize must never present an empty field, and reallocating clears the density target by definition. The tier decision is made once (§6.10) and is not revisited on resize.
+**Resize handling.** Use a `ResizeObserver` on each canvas's parent (not `window.resize` alone — the signal band can change height without the window changing), rAF-throttled, with a `clientWidth/Height === 0` guard. On resize, when the instance is running and visible: reallocate the simulation targets (updating every `uTexel`/`uAspect`), then **fire a mini-reseed of 4–6 wide splats** before the next render. A resize must never present an empty field, and reallocating clears the density target by definition — one splat is not a composed field. When paused, `document.hidden`, or reduced-motion: reallocate and re-render deterministically without the reseed (§6.12); defer the splat to resume. The tier decision is made once (§6.10) and is not revisited on resize, except one re-probe is allowed when total pixel count jumps >25% (e.g. portrait→landscape).
 
 **Two instances, two contexts.** Browsers cap live WebGL contexts (commonly ~8–16); two is safe. Both must share **one** step driver:
 
 ```js
 // one rAF for both sims; never two loops
+// rAF already stops when the tab is hidden; visibility is handled by flags,
+// not by re-scheduling inside a hidden branch.
 function frame(t) {
-  if (document.hidden) return requestAnimationFrame(frame);
-  if (hero.visible)    hero.step(t);
-  if (echo.visible)    echo.step(t);
+  if (!document.hidden) {
+    if (hero.visible) hero.step(t);
+    if (echo.visible) echo.step(t);
+  }
   requestAnimationFrame(frame);
 }
 ```
@@ -249,7 +291,7 @@ The interface palette is **unchanged** (§5.2). The four anchors below are media
 
 These four are injected as density at splat/emitter sites and blended by the solver. They are not a `linear-gradient` anywhere.
 
-**Per-theme variants are required** (§6.9) — the light-theme values are *lifted* versions of the anchors and the dark-theme values are *deepened* versions, because the base values cannot meet AA for black text (oxblood **3.00:1**) or for white text (sage **1.53:1**, amber **1.88:1**, cobalt **3.68:1**). Sample targets, to be tuned on rendered pixels:
+**Per-theme variants are required** (§6.9) — the light theme *lifts oxblood to terracotta* while sage, amber and cobalt carry over unchanged (they already clear black-text AA); the dark-theme values are *deepened* versions, because the base values cannot meet AA for black text (oxblood **3.00:1**) or for white text (sage **1.53:1**, amber **1.88:1**, cobalt **3.68:1**). Sample targets, to be tuned on rendered pixels:
 
 | Anchor | Light theme (for black type) | Dark theme (for white type) |
 |---|---|---|
@@ -260,7 +302,7 @@ These four are injected as density at splat/emitter sites and blended by the sol
 
 Ratios are computed with the WCAG 2.x relative-luminance formula against each anchor's own color. They are a **starting point, not proof** — the solver blends, clamps and advects, so the real measurement happens on rendered pixels (§6.7).
 
-The dark anchors sit **far below** the 0.15 luminance ceiling of §6.7 on purpose: the ceiling is a safety bound, not a target. Staying well under it is what keeps the dark field nocturnal and keeps the brighter blended regions of the field safely inside it. Do not raise the dark anchors to "use the headroom" — the headroom exists precisely so that intermediate blend states can never reach a value that breaks white text.
+The dark anchors are designed to sit below the 0.15 luminance ceiling of §6.7 (verify on rendered pixels; nominal white-on-anchor ratios above are not proof of field luminance). the ceiling is a safety bound, not a target. Staying well under it is what keeps the dark field nocturnal and keeps the brighter blended regions of the field safely inside it. Do not raise the dark anchors to "use the headroom" — the headroom exists precisely so that intermediate blend states can never reach a value that breaks white text.
 
 *Why the light theme lifts oxblood instead of forcing a permanent dark scrim:* the user chose theme-dependent hero type with a *light* scrim in light mode (§2 #30). A light scrim over a dark oxblood field would have to do all the work alone; lifting the anchor means the field is inherently black-text-safe and the scrim is decorative rather than load-bearing.
 
@@ -288,8 +330,9 @@ Unchanged from `DESIGN.md`: Inter 300/400/500 (hero `clamp(3.5rem, 13vw, 9rem)`/
   --scrim-core: rgba(255, 255, 255, 0.72);
   --scrim-edge: rgba(255, 255, 255, 0);
 
-  /* Vignette — deliberately small, and weaker in light theme: the edges of a
-     bright pastel field must not be visibly darkened (see §6.7). */
+  /* Vignette strength (unitless opacity 0–1) — deliberately small, and weaker in
+     light theme: the edges of a bright pastel field must not be visibly
+     darkened (see §6.7). `--vignette-tint` is a comma-triplet RGB. */
   --vignette: 0.06;
   --vignette-tint: 0, 0, 0;
 }
@@ -304,6 +347,25 @@ Unchanged from `DESIGN.md`: Inter 300/400/500 (hero `clamp(3.5rem, 13vw, 9rem)`/
 
   --vignette: 0.15;
   --vignette-tint: 0, 0, 0;
+}
+
+/* Theme-invariant deep palette for the echo instance (§6.3), which always
+   renders on obsidian regardless of theme. In light theme these values are
+   NOT readable from the theme-scoped --media-* tokens, so the echo MUST read
+   these (or cache the dark values at init). */
+:root {
+  --media-sage-deep:   rgb(43, 74, 51);
+  --media-amber-deep:  rgb(97, 62, 18);
+  --media-oxblood-deep: rgb(74, 20, 16);
+  --media-cobalt-deep: rgb(24, 52, 110);
+
+  /* Provisional tagline token, created ONLY if rendered-pixel measurement
+     (§6.7) shows --muted failing over the fluid. Light  #545454 (~7.5:1 on the
+     lightest field); dark #c9c9c9 (~8:1 on the deepest field). Tune on pixels. */
+  --muted-on-fluid: #545454;
+}
+:root[data-theme="dark"] {
+  --muted-on-fluid: #c9c9c9;
 }
 ```
 
@@ -327,7 +389,7 @@ These tokens are the **single source of truth**. `js/fluid.js` reads them with `
 
 ### 6.1 Sim core
 
-A GPU Navier-Stokes solver on a screen-space quad, OGL `Program` + `Mesh(Triangle)` + ping-pong `RenderTarget`s. Passes per frame:
+A GPU Navier-Stokes solver on a screen-space quad: **one OGL `Program` per pass** (advect, curl, vorticity, divergence, pressure, gradient-subtract, splat-add, display) sharing **one** `Mesh(new Triangle(gl))` and one fullscreen vertex shader, with ping-pong `RenderTarget`s. `Vec2` carries the per-grid `uTexel` / `uCenter` uniforms. Passes per frame:
 
 1. **Advect** velocity (semi-Lagrangian, bilinear).
 2. **Dissipate** velocity (multiply toward zero by the per-second factor).
@@ -341,28 +403,32 @@ A GPU Navier-Stokes solver on a screen-space quad, OGL `Program` + `Mesh(Triangl
 10. **Inject** emissions — autonomous emitters, pointer splats, scroll and event impulses (§6.4). Injections are additive splat passes writing to **both** the velocity and the density targets; a color injected without a matching velocity contribution sits dead in the field and is exactly what makes a fluid look like a painted gradient instead of liquid.
 11. **Render** to screen: density → palette mapping → luminance/saturation clamp (§6.7) → vignette (§6.8) → dither (§6.8).
 
-Steps 1–9 are fixed-count; step 10 is data-dependent but never adds a pass (all injections inside one frame are batched into the same splat pass).
+Steps 1–9 are fixed-count; step 10 is data-dependent but never adds a pass (all injections inside one frame are batched into the same splat pass, max 8 splats/frame; beyond 8, drop in this order: reveal impulses, scroll, pointer, autonomous — autonomous emitters are never dropped entirely, at most deferred one frame).
 
-Parameter targets (starting values; tune against rendered output, then freeze them in the change log):
+**Normative constants (provisional; tune on rendered output, then freeze in the change log):**
 
 | Parameter | High tier | Note |
 |---|---|---|
-| Sim resolution (long side) | 256 | Density 512 |
-| Pressure iterations | 20 | 12 at Medium, 8 at Low |
-| Velocity dissipation | 0.985 /s | Slow decay — patient motion |
-| Density dissipation | 0.992 /s | Color must linger: the field is the artwork |
+| Sim resolution (long side) | 256 | Density grid long side 512. Derive W×H per grid from canvas aspect: if `aspect >= 1`, `W = LONG, H = round(LONG / aspect)`; else `H = LONG, W = round(LONG * aspect)`. Pass per-grid `uTexel = Vec2(1/W, 1/H)`; aspect-correct splats (`dx *= aspect`). Velocity/curl/divergence/pressure run at sim res; density advection samples the velocity texture with its own texel + linear filtering; display samples density. |
+| Pressure iterations (`PRESSURE_ITERATIONS`) | 20 | 12 at Medium, 8 at Low. Iteration count only — no new programs. |
+| Velocity dissipation base | 0.985 /s | Applied time-correct: `factor = pow(0.985, dt)` with `dt` clamped to ≤ 1/30. Slow decay — patient motion. |
+| Density dissipation base | 0.992 /s | Applied as `pow(0.992, dt)`. Color must linger: the field is the artwork. |
 | Curl (vorticity) | 14 | *Deliberately low.* Above ~25 the field becomes filamentary and stops reading as molten silk (§6.5) |
-| Splat radius | 0.006 UV | Wide and soft; a small radius is what makes fluids look like ink |
-| Splat force | 4200 × clamped pointer delta | Clamped so a fast flick cannot blow the field apart |
-| Pressure/velocity texel format | `RGBA16F` when renderable, else `RGBA8` (a documented quality apology) | Half-float is what keeps the gradients smooth |
+| Splat radius | 0.15–0.25 aspect-corrected UV (floor 0.005 per §6.5) | Wide and soft; a small radius is what makes fluids look like ink. Gaussian profile, no hard edge. |
+| Splat force | `dx = deltaPx / simLong * forceScale`, `|dx|` clamped to 8–12 grid units/frame | Clamped so a fast flick cannot blow the field apart. `deltaPx` = CSS px pointer delta; `simLong` = sim grid long side. |
+| Velocity/pressure texel format | `RGBA16F` when renderable, else `RGBA8` (a documented quality apology) | Velocity + pressure need float; density alone may stay `RGBA8` longer. On partial support, keep velocity/pressure at 16F even if density drops. Half-float is what keeps the gradients smooth. |
+| Density texel format | `RGBA16F` when renderable, else `RGBA8` | The energy-reduction target (§6.6) is ALWAYS `RGBA8`/`UNSIGNED_BYTE` — half-float surfaces are not `readPixels`-readable. |
 | DPR cap | 1.5 | Medium 1.0, Low 0.75 |
+| Renderer construction | `new Renderer({ alpha: false, depth: false, stencil: false, antialias: false, premultipliedAlpha: false, powerPreference: "low-power" })` | Opaque canvas: display shader outputs opaque. `depth: false` on every sim `RenderTarget` — no depth buffer per ping-pong pair. |
+| Sim `RenderTarget` recipe (WebGL2 + float) | `{ width: W, height: H, internalFormat: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT, minFilter: gl.LINEAR, magFilter: gl.LINEAR, depth: false, stencil: false }` | 16F is filterable in WebGL2 core — use 16F precisely because of this; never 32F (would need `OES_texture_float_linear`). |
+| Sim `RenderTarget` recipe (fallback) | `{ width: W, height: H, format: gl.RGBA, type: gl.UNSIGNED_BYTE, minFilter: gl.LINEAR, magFilter: gl.LINEAR, depth: false, stencil: false }` | Under WebGL1 the half-float type MUST be the extension's `HALF_FLOAT_OES`, not `gl.HALF_FLOAT`; if that path cannot be satisfied, fall to `RGBA8`. |
 
 **Float support must be version-detected, never assumed.** The renderability requirement differs by context type, and the previous revision named only the WebGL1 extension:
 
 | Context | Required for renderable `RGBA16F` | Also needed for linear filtering |
 |---|---|---|
-| **WebGL2** | `EXT_color_buffer_float` | automatic |
-| **WebGL1** | `OES_texture_half_float` **+** `EXT_color_buffer_half_float` | `OES_texture_half_float_linear` |
+| **WebGL2** | `EXT_color_buffer_float` | automatic for 16F (hence 16F-only, never 32F) |
+| **WebGL1** | `OES_texture_half_float` **+** `EXT_color_buffer_half_float` (type = extension's `HALF_FLOAT_OES`) | `OES_texture_half_float_linear` |
 | Neither | — | fall back to `RGBA8` |
 
 *Why `RGBA8` remains an acceptable (but degraded) fallback:* plenty of mobile GPUs render without float color buffers. The sim still runs; the gradients step slightly, and §6.8's dither exists partly to soften that. **Detect once at init, never per frame.**
@@ -374,8 +440,8 @@ Parameter targets (starting values; tune against rendered output, then freeze th
 ### 6.2 Hero instance
 
 - Canvas lives in `.ambient` (fixed, full viewport, `z-index: 0`, `pointer-events: none`, `aria-hidden="true"`). Containment of the wash to the hero is achieved exactly as today: `main` and `.footer` are opaque `var(--bg)`, `.hero` is transparent.
-- **Cold start.** The sim does not exist during boot. `main.js` calls `window.Fluid.init("hero", …)` from its existing `heroReveal()` handoff — the same idempotent function boot completion and skip already share — **or** from the `fluid:ready` handler if the hero reveal has already run by the time the module arrives (§3's resolution rule). Both entry points call the same guarded function, and neither may run it twice. Nothing runs behind the opaque overlay: no GPU spend while the first 4–5s are covered.
-- **Bloom-in.** On init, an emissive term ramps 0→1 over ~1.5s on the project's signature ease `cubic-bezier(0.19, 1, 0.22, 1)`, so the fluid appears to ignite from the center outward as the overlay lifts. If the fluid arrives late (CDN slow), the ramp starts whenever `init` actually runs — never a hard cut.
+- **Cold start.** The sim does not exist during boot. `main.js` calls `startHeroFluidOnce()` (which calls `window.Fluid.init("hero", {})`) from its existing `heroReveal()` handoff — the same idempotent function boot completion and skip already share — **or** from the `fluid:ready` handler if the hero reveal has already run by the time the module arrives (§3's resolution rule). The `heroFluidStarted` guard means neither entry point can run it twice. Nothing runs behind the opaque overlay: no GPU spend while the first 4–5s are covered.
+- **Bloom-in.** On init, a `uBloom` display-shader multiplier ramps 0→1 over ~1.5s on the project's signature ease `cubic-bezier(0.19, 1, 0.22, 1)`, started only after the first frame has actually been submitted (Risk 2), so the fluid appears to ignite from the center outward as the overlay lifts. If the fluid arrives late (CDN slow), the ramp starts whenever `init` actually runs — never a hard cut. The echo instance is exempt from bloom.
 - **Pause** when `.hero` leaves the viewport.
 - **Reduced motion:** §6.12 — one frame, then frozen; the bloom-in is skipped (a frozen frame has nothing to ramp).
 - *Failure is silent here:* if `init` fails, `.blob` keeps its current `display` and the hero is simply today's hero. No error UI, no empty state, no user-visible difference beyond the absence of the effect.
@@ -383,13 +449,14 @@ Parameter targets (starting values; tune against rendered output, then freeze th
 
 ### 6.3 Echo instance — signal board
 
-- The signal board section becomes a **full-bleed obsidian band** in both themes. Implement it by scoping the interface tokens on the band (§5.4) rather than rewriting each rule: `--bg`/`--bg-elev` `#000000`, `--text` `#ffffff`, `--muted` `#a8a8a8` (8.83:1 on obsidian, already verified in DESIGN.md), `--line` `rgba(255,255,255,0.35)`. Every existing signal-board component then inverts correctly for free; the dashed-muted dividers become dashed-light dividers with no markup change.
+- The signal board section becomes a **full-bleed obsidian band** in both themes. Implement it by scoping the interface tokens on the band (§5.4) rather than rewriting each rule: `--bg`/`--bg-elev` `#000000`, `--text` `#ffffff`, `--muted` `#a8a8a8` (8.83:1 on obsidian, already verified in DESIGN.md), `--line` `rgba(255,255,255,0.35)`. Every existing signal-board component then inverts correctly for free; the dashed-muted dividers become dashed-light dividers with no markup change. Full-bleed inside the constrained `main`: `width: 100%; margin-inline: calc(50% - 50vw)` on the band with an `overflow-x: clip` guard on `body` (already present, `css/style.css` 34) — no other box-model change.
 - Behind it, `canvas.fluid-echo`, absolutely positioned to the band and clipped by it (`overflow: clip` on the band), running at **quarter scale** (sim 64, DPR 1, pressure iterations 8), with:
   - no pointer splats,
-  - half the autonomous emitter rate,
-  - a fixed deep palette (not theme-tuned — the band is obsidian in both themes),
-  - canvas opacity ~0.5 and a heavier dither term.
-- The band's own top/bottom edges get a short gradient fade into `var(--bg)` so the obsidian block reads as an intentional band, not a rectangle pasted on the page.
+  - half the autonomous emitter rate (one splat per 6–12s),
+  - a fixed deep palette read from the theme-invariant `--media-*-deep` tokens (not theme-tuned — the band is obsidian in both themes),
+  - canvas opacity ~0.5 and a heavier dither term,
+  - **no scrim**: the echo relies on obsidian + 0.5 opacity, not the global `.fluid-scrim` (which sits at z-index 1 below all content and therefore never covers the echo).
+- The band's own top/bottom edges get a short gradient fade into `var(--bg)` so the obsidian block reads as an intentional band, not a rectangle pasted on the page. Implement the fade as a background/`::before`/`::after` overlay only — no padding, margin or height change. Verify zero-CLS by comparing `getBoundingClientRect()` of the cards pre/post change.
 - Pauses when off-viewport (mandatory — this is the instance most likely to be running while nothing else is).
 - The section's existing zero-CLS guarantee is unchanged: the band is a pure background change, no box moves, no card dimensions change.
 
@@ -399,15 +466,15 @@ Parameter targets (starting values; tune against rendered output, then freeze th
 
 | Drive | Behavior | Amplitude |
 |---|---|---|
-| Autonomous | 2 emitters on slow wandering paths (6–11s per leg, targets from a **local PRNG inside `fluid.js`**), each firing a wide soft splat every 3–6s, plus a permanent low-amplitude curl floor so the field never sits still | Low — must never dominate |
-| Pointer | `pointermove` (throttled to one injection per frame) injects a wide soft splat along the movement delta; intensity scales with speed. On `pointerleave`, decay to autonomous over ~2s | Medium — visible but never a scribble |
-| Scroll | `ScrollTrigger` `onUpdate` `getVelocity()` maps to a turbulence injection, clamped. Fast scrolling visibly stirs; stopping lets it settle | Medium, clamped |
+| Autonomous | 2 emitters on slow wandering paths (6–11s per leg, targets from a **local PRNG inside `fluid.js`**), each firing a wide soft splat (radius 0.15–0.25 UV, `|dx|` ≤ 4 grid units) every 3–6s, plus a permanent low-amplitude curl floor so the field never sits still | Low — must never dominate |
+| Pointer | `pointermove` (throttled to one injection per frame) injects a wide soft splat (radius 0.15–0.25 UV) along the movement delta; intensity scales with speed up to the §6.1 clamp. On `pointerleave`, decay to autonomous over ~2s | Medium — visible but never a scribble |
+| Scroll | `ScrollTrigger` `onUpdate` `getVelocity()` maps to a turbulence injection: `|dx|` ≤ 6 grid units, radius 0.2–0.3 UV. Fast scrolling visibly stirs; stopping lets it settle. Scroll velocity and section-reveal impulses in the same frame batch into the single splat pass (§6.1); combined injections still obey the 8-splat cap. | Medium, clamped |
 
 **Three event couplings, and no others:**
 
-1. **Ghost pill hover** — hovering `.btn` injects one warm, diffuse bloom beneath the element's center (read via `getBoundingClientRect()`). No sharp splat: physically it should read as a warm hand held near the liquid. Gated on `pointer: fine` and not-reduced-motion, matching the existing magnetic-hover gate.
-2. **Terminal keystrokes** — each `keydown` that actually inserts a character in `.term-input` sends one small impulse, so typing literally stirs the light. Character keys only: ignore modifiers, navigation keys, `Tab`, `Enter`, and anything with `event.metaKey`/`ctrlKey` set. (Command history with ↑/↓ already has `preventDefault` handling; those keys must not stir the field.)
-3. **Section reveals** — each `ScrollTrigger` reveal batch (signal cards, project rows, contact heading) sends one slow, wide impulse, so structure and backdrop pulse together.
+1. **Ghost pill hover** — hovering `.btn` injects one warm, diffuse bloom (radius 0.2–0.3 UV, `|dx|` ≤ 3 grid units, amber-weighted) beneath the element's center (read via `getBoundingClientRect()`). No sharp splat: physically it should read as a warm hand held near the liquid. Gated on `pointer: fine` and not-reduced-motion, matching the existing magnetic-hover gate.
+2. **Terminal keystrokes** — a `keydown` on `.term-input` stirs the field iff `e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey` (IME composition / paste / mobile predictive text do not count; one impulse per key event, radius 0.1–0.15 UV, `|dx|` ≤ 2). Character keys only: ignore modifiers, navigation keys, `Tab`, `Enter`. (Command history with ↑/↓ already has `preventDefault` handling; those keys must not stir the field.)
+3. **Section reveals** — each `ScrollTrigger` reveal batch (signal cards, project rows, contact heading) sends one slow, wide impulse (radius 0.25–0.35 UV, `|dx|` ≤ 3), batched with scroll-velocity injection per §6.1 — never a second pass.
 
 *Why a local PRNG and not `gsap.utils.random`:* `fluid.js` is loaded as a module and must be able to initialise on its own terms. Reaching for `window.gsap` re-introduces the exact load-order dependency the module placement and readiness contract exist to remove — and it would fail outright if GSAP were blocked while OGL loaded fine. `Math.random()` is sufficient; the emitters do not need GSAP's seeded distribution.
 
@@ -430,11 +497,12 @@ The look, expressed as constraints the implementation must not violate:
 
 ### 6.6 Idle reseed
 
-- Track field energy: reduce the curl magnitude into a **1×1 render target** as a final optional pass, then `readPixels` that single pixel **once every 5s**.
-- If energy < `RESEED_FLOOR` for two consecutive samples, fire one **wide, slow, gentle** burst (radius ~0.03 UV, low amplitude, no velocity spike) at a random off-center point — enough to re-energize, gentle enough to be invisible as an event.
-- *Why a readback is acceptable at all:* it is 4 bytes, once per 5s, and the 1×1 reduction happens in a pass the frame already runs. The stall is one frame at a 0.2 Hz cadence. If it proves janky on real hardware, replace it with a **CPU-side energy proxy** (a decaying accumulator of injection magnitudes) rather than increasing the readback cadence.
+- Default: a **CPU-side energy proxy** — a decaying accumulator of injection magnitudes (`energy = energy * pow(0.5, dt/10) + |injection|`), sampled once every 5s. No GPU readback on the default path.
+- Opt-in alternative: reduce the curl magnitude into a **1×1 `RGBA8`/`UNSIGNED_BYTE` render target** (never a half-float target — those are not `readPixels`-readable) with a multi-tap average shader, then `readPixels` that single pixel **once every 5s**. The reduction runs ONLY on sample frames, never every frame (an extra pass every frame would violate §8 rule 5).
+- If energy < `RESEED_FLOOR` (mean curl magnitude in normalized 0–1 density units; provisional 0.02) for two consecutive samples, fire one **wide, slow, gentle** burst (radius ~0.3 UV, `|dx|` ≤ 2 grid units, no velocity spike) at a random off-center point — enough to re-energize, gentle enough to be invisible as an event.
+- *Why the CPU proxy is the default:* it is free, synchronous, and cannot hitch. The readback is 4 bytes at 0.2 Hz but still stalls one frame; use it only if the proxy proves unrepresentative on real hardware.
 - Reseed never runs when the instance is paused or `document.hidden`.
-- **A resize forces a reseed.** Reallocating the simulation targets clears density by definition (§4), so the resize handler fires one wide splat immediately after reallocation rather than waiting for the energy floor to trip.
+- **A resize forces a mini-reseed when running.** Reallocating the simulation targets clears density by definition (§4), so the resize handler fires 4–6 wide splats immediately after reallocation rather than waiting for the energy floor to trip. When paused/hidden, defer per §4.
 
 ### 6.7 Legibility — cap *and* scrim
 
@@ -456,11 +524,11 @@ Two independent guarantees, both required. Neither alone is sufficient: the cap 
 }
 ```
 
-Light theme core is white-ish, dark theme core is black-ish (§5.4). The core is centered on the hero headline, so the **most consistent region of the frame sits exactly under the type** — and the fluid stays **bright and saturated at the viewport edges**, where nothing needs to be read. *In light theme the core is the lightest region, not the darkest; the point is consistency under the type, not darkness.*
+Light theme core is white-ish, dark theme core is black-ish (§5.4). The core is centered on the hero headline, so the **most consistent region of the frame sits exactly under the type at the top of the page** — and the fluid stays **as bright and saturated at the viewport edges as the composition allows** (light-theme vignette ≤ 0.06, §6.8), where nothing needs to be read. *In light theme the core is the lightest region, not the darkest; the point is consistency under the type, not darkness.*
 
 **Containment depends on the content layer.** Like the wash itself, this fixed scrim is contained to the hero only because `main` and `.footer` are opaque and painted above it (content `z-index: 2` > scrim `1`). If a future change makes either background transparent, the scrim will cover the entire document. That dependency is deliberate and is recorded here so it is not discovered by accident.
 
-**Measurement obligation.** Nominal palette math (§5.1) is *not* proof — the solver blends and clamps values, so both text colors must be measured against **rendered pixels** at the worst-case frame: the brightest amber bloom under the headline (light theme) and the brightest sage/cobalt region under the headline (dark theme). Tightest acceptable: 4.5:1. If hero `.tagline` (`--muted` #6d6d6d, 5.17:1 on paper) fails over the fluid, introduce `--muted-on-fluid` and raise it — do **not** dim the fluid further.
+**Measurement obligation.** Nominal palette math (§5.1) is *not* proof — the solver blends and clamps values, so both text colors must be measured against **rendered pixels** at the worst-case frame: the brightest amber bloom under the headline (light theme) and the brightest sage/cobalt region under the headline (dark theme). Tightest acceptable: 4.5:1. If hero `.tagline` (`--muted` #6d6d6d, 5.17:1 on paper) fails over the fluid, activate the provisional `--muted-on-fluid` (§5.4) — do **not** dim the fluid further.
 
 ### 6.8 Dither and vignette
 
@@ -470,7 +538,7 @@ Light theme core is white-ish, dark theme core is black-ish (§5.4). The core is
   color += (d - 0.5) * (0.6 / 255.0);
   ```
   Static (not time-varying) — an animated dither would be motion, and would also need reduced-motion handling. *Why it is mandatory:* four anchors interpolated across a full viewport produce large low-contrast gradients, exactly the case where 8-bit quantization bands visibly. This costs nothing (the pixel is already being shaded) and is the standard fix.
-- **Vignette (required, very subtle, and theme-specific).** `--vignette: 0.15` in dark theme, **`0.06` in light theme**; folded into the scrim layer above via `rgba(var(--vignette-tint), var(--vignette))`. It reinforces the centered headline composition and complements the cap.
+- **Vignette (required, very subtle, and theme-specific).** `--vignette: 0.15` in dark theme, **`0.06` in light theme**; folded into the scrim layer above via `rgba(var(--vignette-tint), var(--vignette))`. It reinforces the centered headline composition and complements the cap. Vignette and scrim share one layer and one containment dependency (§6.7) by construction — turning the scrim off turns the vignette off; tune them as a pair.
   - *Why the light theme needs a weaker vignette:* §6.7 promises the fluid stays bright at the viewport edges, where nothing needs to be read. A 0.15 dark overlay at those edges would directly contradict that promise on the one theme where the field is supposed to be luminous. Above 0.2 the vignette starts reading as a dark overlay rather than an atmosphere — in light theme that threshold is much lower.
 - The existing `.grain { display: none }` stays `display: none`. The SVG `feTurbulence` overlay is **not** resurrected — DESIGN.md removed it from this world deliberately, and the in-shader dither covers the same need for free.
 
@@ -478,7 +546,7 @@ Light theme core is white-ish, dark theme core is black-ish (§5.4). The core is
 
 **Per-theme palettes, crossfaded in-shader.** `uMix` is a `float` uniform ramping `0 → 1` (or `1 → 0`) over **0.7s on `power3.inOut`** — **exactly the wipe's timing and ease, not the page's 0.8s CSS signature ease** — interpolating all four anchors between the light and deep sets.
 
-*Why the wipe's numbers and not `--ease`:* the existing wipe runs `duration: 0.7, ease: "power3.inOut"` (`js/main.js` 545–548). The crossfade exists to hide inside that wipe; if it finished 0.1s later on a different curve, the fluid would visibly complete *after* the wipe had gone, which is precisely the seam the crossfade was chosen to prevent. Read the wipe's duration and ease from one shared constant so they cannot drift apart.
+*Why the wipe's numbers and not `--ease`:* the existing wipe runs `duration: 0.7, ease: "power3.inOut"` (`js/main.js` 545–549). The crossfade exists to hide inside that wipe; if it finished 0.1s later on a different curve, the fluid would visibly complete *after* the wipe had gone, which is precisely the seam the crossfade was chosen to prevent. Both read from one shared constant owned by `main.js` and set before `fluid:ready` can fire: `window.THEME_WIPE = { duration: 0.7, ease: "power3.inOut" }`. The module reads `window.THEME_WIPE`; GSAP's `power3.inOut` is approximated in-shader by `smoothstep`-shaped easing over the same duration.
 
 **The palette-caching requirement — this is the part that is easy to get wrong.** The media tokens are theme-scoped (§5.4), so a `getComputedStyle` read performed *after* `data-theme` flips returns only the new palette. There is nothing left to interpolate *from*. The sequence must therefore be:
 
@@ -488,11 +556,11 @@ Light theme core is white-ish, dark theme core is black-ish (§5.4). The core is
 4. Set `uFrom`/`uTo` uniforms and ramp `uMix` 0→1 over 0.7s `power3.inOut`.
 5. On completion, copy `uTo` into `uFrom` so the next toggle has a valid starting point even if the theme is flipped twice in quick succession.
 
-An in-flight crossfade interrupted by a second toggle must restart from the *current interpolated* state, not from `uFrom`. Snapping mid-ramp is more visible than a slightly faster second ramp.
+An in-flight crossfade interrupted by a second toggle must restart from the *current interpolated* state, not from `uFrom`: snapshot `m = uMix` at interrupt, compute `current = lerp(uFrom, uTo, ease(m))` on the CPU, use `current` as the new `uFrom` with the fresh `uTo`, and ramp `uMix` 0→1 again. Snapping mid-ramp is more visible than a slightly faster second ramp. `window.Fluid.setTheme(to)` owns this entire sequence — signature in §6.14.
 
 *Why this fits the existing wipe:* the wipe reveals the new theme through an expanding circle from the toggle button. Crossfading the fluid on the same clock means the boundary the user sees is the wipe's boundary, not a visible palette seam inside the liquid. The wipe does the concealing; the crossfade does the continuity. Do not add a second overlapping reveal.
 
-**Incidental defect to fix in this same change.** The wipe is painted from hardcoded `#050810` / `#f3f6ff` (`js/main.js` 537) — the **retired aurora palette**, not the current `--bg` (`#000000` / `#ffffff`). Today that mismatch is nearly invisible because the wipe is an off-black — against the new fluid it will read as a colour cast crossing the page. The wipe must be painted from the outgoing theme's actual background (`getComputedStyle` of `--bg`, matching the snapshot already required in step 1 above) rather than a literal.
+**Incidental defect to fix in this same change.** The wipe is painted from hardcoded `#050810` / `#f3f6ff` (`js/main.js` 538) — the **retired aurora palette**, not the current `--bg` (`#000000` / `#ffffff`). Today that mismatch is nearly invisible because the wipe is an off-black — against the new fluid it will read as a colour cast crossing the page. The wipe must be painted from the outgoing theme's actual background (`getComputedStyle` of `--bg`, matching the snapshot already required in step 1 above) rather than a literal.
 
 **Hero type stays theme-dependent (§2 #30):**
 
@@ -505,7 +573,7 @@ An in-flight crossfade interrupted by a second toggle must restart from the *cur
 
 **The echo instance is exempt from theme tuning** — its host band is obsidian in both themes, so it always renders the deep palette.
 
-**Theme change during a running sim** must not reset velocity or clear density. Only the four palette uniforms move.
+**Theme change during a running sim** must not reset velocity, clear density, or restart `uBloom`. Only the four palette uniforms move. If a `matrix` tint (§6.14) is active, the theme crossfade composes underneath the independent `uTint` overlay — the tint releases onto the *current* theme palette.
 
 ### 6.10 Quality tiers and auto-cull
 
@@ -515,47 +583,59 @@ An in-flight crossfade interrupted by a second toggle must restart from the *cur
 | **Medium** | 1.0 | 128 | 256 | 12 | 0.8× |
 | **Low** | 0.75 | 64 | 128 | 8 | 0.6× |
 
-- Start at the tier implied by a cheap device hint (viewport size, `devicePixelRatio`, `navigator.hardwareConcurrency` where available), then **probe** the first ~90 frames and compute average frame time.
+- Start at the tier implied by a cheap device hint (viewport size, `devicePixelRatio`, `navigator.hardwareConcurrency` where available), then **probe** the first ~90 frames **starting after the first presented frame post-boot-lift** and compute average frame time, **excluding the first 10–20 frames** (compile + reveal + font/stats fetch) and using median as a tiebreak on noisy devices.
 - Budget: **22 ms** average over the window (a ~45 fps floor with headroom, deliberately looser than 16.7 ms so a single hitch does not trigger a downgrade).
-- Miss the budget → **step down exactly one tier** and re-probe after a further 90 frames. Never step down twice from one window.
+- Miss the budget → **step down exactly one tier** (dispose + recreate `RenderTarget`s, reset the clock) and re-probe after a further 90 frames. Never step down twice from one window.
 - **Never step back up mid-session.** Oscillation is worse than running slightly below the device's ceiling — a visible quality pop every few seconds is a bug, not an optimization.
-- **Low + still missing the budget → cross-fade to the blob wash over 0.6s, then `destroy()` the context** (lose the context deliberately so the GPU memory is actually released). The handoff is one-way for the session.
+- **Low + still missing the budget → cross-fade to the blob wash over 0.6s, then per-instance `destroy()`** — cancel stepping for that instance, `WEBGL_lose_context.loseContext()`, remove the canvas, drop GL refs, set `status: "destroyed"` (plus a global `destroyAll()`). Losing the context deliberately is what actually releases GPU memory. The handoff is one-way for the session.
 - The echo instance is exempt from its own tier logic: it is fixed at quarter scale and simply pauses when off-viewport.
-- **One ladder is enough because the two instances are never on screen together.** The mandatory off-viewport pause (§4) means the hero is already stopped by the time the signal band scrolls into view, so the probe always measures a single live instance. If that assumption is ever broken — for example by shortening the hero or adding a third instance — the watchdog must become a combined measurement, not two independent ladders.
+- **One ladder covers steady state; transitions are combined.** The mandatory off-viewport pause (§4) means steady state is a single live instance, but during hero→band scroll transitions both can be partially visible — the worst case the probe never measures. Whenever both `visible` flags are true in one frame, the watchdog MUST measure combined `hero.step + echo.step` wall time against the same 22 ms budget. If co-visibility becomes common (e.g. hero shortened, third instance), split the ladders — do not keep a single-instance probe.
 - The probe must not consume a context slot. Let OGL construct the context and treat a thrown constructor as the unsupported signal; if a pre-flight probe is used anyway, release it (§6.1).
 - *Why the probe is once:* re-probing on scroll (a rejected alternative) doubles the state machine for a case the off-viewport pause already covers.
 
 ### 6.11 Context loss and fallback handoff
 
-- `canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); … }, false)`:
-  1. Stop the loop for that instance.
-  2. Cross-fade to the blob wash over 0.6s: fade the canvas `opacity` to 0, set the blobs back to `display: block`, and `.resume()` their four tweens. Because those tweens were **paused, never killed** (last bullet below), no restart path has to exist — which is the entire reason for pausing rather than destroying them.
-  3. Do **not** attempt an in-session restore. A lost context is a graceful change of weather, and a restore attempt on a memory-pressured iOS device is how you lose the second context too.
+- `canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); … }, false)` — `preventDefault()` is kept ONLY to suppress the browser's default blanking during the 0.6s cross-fade; it does not signal a restore intent:
+  1. Set that instance's `visible = false` (the shared rAF in §4 keeps running while the other instance is alive).
+  2. Hero: cross-fade to the blob wash over 0.6s — fade the canvas `opacity` to 0, set the blobs back to `display: block`, and `.resume()` their four tweens. Because those tweens were **paused, never killed** (last bullet below), no restart path has to exist — which is the entire reason for pausing rather than destroying them. Echo: fade its canvas to 0, pause, and leave the plain obsidian band (the "static band" terminal state).
+  3. Do **not** attempt an in-session restore. A lost context is a graceful change of weather, and a restore attempt on a memory-pressured iOS device is how you lose the second context too. Set `status: "lost"`.
 - **No persistent downgrade.** Nothing about the failure is written to `localStorage` or `sessionStorage`; the next page load attempts the fluid fresh. A transient loss must never permanently downgrade the site for that visitor.
-- `webglcontextcreationerror` and a failed `getContext("webgl2")` / `getContext("webgl")` both take the same path — blobs, silently.
+- Construction failure takes the same path — blobs, silently. The failure signal is a **thrown OGL `Renderer` constructor** (or `renderer.gl.isContextLost()` true immediately after); OGL owns context creation (§6.1), so a bare `getContext()` returning null is not the failure mode. Attach `webglcontextcreationerror` on the canvas OGL creates, inside the same try/catch → `status: "unsupported"`.
 - **Blobs while the sim is healthy:** `display: none` on `.ambient .blob`, and the four per-blob tweens — **plain `gsap.to()` tweens, not a timeline** — **paused** with `.pause()`. Never `kill()`, never `destroy()`, or §6.11 step 2 becomes a rebuild instead of a `.resume()`. *Why hidden rather than 0-opacity:* a second full-viewport compositing layer drifting invisibly is pure waste, and the cross-fade handoff is a single explicit transition rather than a permanent hidden cost.
 
 ### 6.12 Reduced motion
 
 - `prefers-reduced-motion: reduce` → **render exactly one frame of the sim at init, then stop the loop permanently.** No autonomous drift, no pointer injection, no scroll injection, no couplings, no bloom-in, no reseed, no theme crossfade (instant palette swap).
-- The static frame must be **representative**, not the empty field it would otherwise be at t=0: seed it with a deterministic set of wide splats (~30 fixed splat positions and amplitudes) before the single render, so the frozen image shows a composed liquid rather than one lonely blob. *Why:* the frozen frame is the entire experience for these visitors — it has to be a good photograph of the liquid, not a screenshot of a cold start.
+- The static frame must be **representative**, not the empty field it would otherwise be at t=0: seed it with a deterministic set of wide splats (**exactly 30 committed literals** — positions, radii, amplitudes — in `fluid.js`, delegated to the builder's eye and verified via the §12 frozen-frame check in both themes) before the single render, so the frozen image shows a composed liquid rather than one lonely blob. *Why:* the frozen frame is the entire experience for these visitors — it has to be a good photograph of the liquid, not a screenshot of a cold start.
 - **This is a deliberate exception to §2 #23's "unseeded" rule.** A random single frame could be a bad photograph, and there is no second frame to correct it; determinism is the only way to guarantee the reduced-motion visitor gets a composed image. The frozen frame is therefore identical on every visit by design.
-- **The context is kept but idle** (never stepped, never `destroy()`ed — destroying it blanks the canvas). Do **not** rely on the front buffer surviving, though: a tab restore, a device resize, or a driver-level surface loss can leave the canvas blank. Therefore "frozen" means *no animation*, not *never drawn again*: re-render the identical frame from the same deterministic seed on `resize` (via the `ResizeObserver`) and on `visibilitychange` → visible.
-- Theme change under reduced motion re-renders **one** frame with the new palette, then returns to idle.
+- **The context is kept but idle** (never stepped, never `destroy()`ed — destroying it blanks the canvas). Do **not** rely on the front buffer surviving, though: a tab restore, a device resize, or a driver-level surface loss can leave the canvas blank. Therefore "frozen" means *no animation*, not *never drawn again*: on `resize` (via the `ResizeObserver`) re-seed deterministically + run a fixed K steps synchronously + single display draw; on `visibilitychange` → visible, do a display-only re-draw from the live FBOs without re-simulating. The frozen path is exempt from the §6.10 watchdog.
+- Theme change under reduced motion updates `uFrom`/`uTo` instantly + one display draw (no reseed), then returns to idle.
 - *Consistency with the CSS:* the existing reduced-motion block (`css/style.css` 342–347) force-disables every animation and transition. That is already compatible with the instant palette swap required here, and it is another reason the frozen-path palette change must be instant rather than ramped. Note also that this block does **not** hide `.ambient` — under reduced motion the blobs are visible-but-static today, so the frozen fluid frame occupying the same layer is a behaviour change only in *what* is shown, not in *whether* the layer exists.
 - This is the *only* path where a visitor with reduced motion sees the new aesthetic at all (§2 #14); it must not be treated as "the static fallback" and left as the least-tested path.
 
 ### 6.13 Retiring the particle drift and cursor glow
 
-- **Particle canvas:** the `drift` mode is **retired**. The canvas element and its loop survive for the `hyperdrive` and `matrix` easter-egg modes only (§6.14), and must no longer render 24 drifting dots. Implementation: keep the canvas, skip the drift render and skip `seed()`'s dot generation while `particleMode === "drift"`, and only allocate/step dots when a mode is active.
-  - *Consequence to verify:* the canvas's existing "pause when off-viewport / hidden" wiring must not leave the easter eggs broken once dots are dormant. The mode functions must be able to cold-start their own state.
+- **Particle canvas:** the `drift` mode is **retired**. The canvas element and its loop survive for the `hyperdrive` and `matrix` easter-egg modes only (§6.14), and must no longer render 24 drifting dots. Implementation: keep the canvas, skip the drift render and skip `seed()`'s dot generation while `particleMode === "drift"`, and only allocate/step dots when a mode is active. Initial canvas state in drift is empty/transparent.
+  - *Consequence to verify:* the canvas's existing "pause when off-viewport / hidden" wiring MUST NOT gate mode entry — `hyperdrive`/`matrix` entry MUST cold-start dot state, and visibility-pausing applies to stepping only, never to mode entry.
 - **Cursor glow:** remove entirely — the DOM node, its `display: none` rule, and the `quickTo` wiring in `initAmbient()`. The fluid now answers the pointer directly; a second pointer-following layer is redundant and, worse, it is the one ambient layer that would sit *above* the fluid and advertise the pointer twice.
 - *Why retire rather than keep:* the fluid is now the page's single visual gesture (DESIGN.md: "one hero-sized visual gesture per page"). Keeping three ambient systems in the same viewport would not only clutter the composition but also compete for the same GPU budget the sim needs. Retiring them buys real headroom: two fewer live systems for zero loss of concept.
 
 ### 6.14 Easter eggs
 
-- **Konami code → `hyperdrive`:** in addition to the existing starfield on the particle canvas, the fluid receives a ~6s violent stirring: splat force and vorticity temporarily spike, the emitters are pushed outward, and the color field smears into directional streaks. It then decays back to calm over ~1.5s. Implementation: `window.Fluid.stir({ intensity, duration })` — a single documented API call, not a shader mode. The starfield stays exactly as it is, on top.
-- **`matrix` command:** the same stir, **plus** a monochrome-green tint. `window.Fluid.tint({ color, duration })` ramps a `uTint` uniform that pulls the field to a single green across ~0.5s, holds for the rest of the ~5s, then releases. The palette is restored exactly; the tint must not persist past its duration even if the theme changes mid-effect.
+**`window.Fluid` IDL (normative):**
+
+```js
+Fluid.status; // "pending" | "ready" | "unsupported" | "lost" | "destroyed"
+Fluid.init(instance, opts); // instance: "hero" | "echo"; opts: { quality?: "high"|"medium"|"low" }
+Fluid.stir({ intensity, durationMs, radius }); // intensity 0..1 (default 1), durationMs (default 6000), radius UV (default 0.25)
+Fluid.tint({ color, rampMs, holdMs }); // color [r,g,b] 0..1 (matrix green default [0.2,1.0,0.35]), rampMs default 500, holdMs default 4500
+Fluid.setTheme(to); // to: "light" | "dark" — owns the §6.9 cache/flip/read/ramp/copy sequence
+Fluid.freeze();   // reduced-motion path: render one deterministic frame, stop stepping
+Fluid.destroy(instance?); // per-instance or destroyAll(): cancel stepping, lose context, remove canvas
+```
+
+- **Konami code → `hyperdrive`:** in addition to the existing starfield on the particle canvas, the fluid receives a ~6s violent stirring: splat force and vorticity temporarily spike, the emitters are pushed outward, and the color field smears into directional streaks. It then decays back to calm over ~1.5s. Implementation: `window.Fluid.stir({ intensity: 1, durationMs: 6000 })` — a single documented API call, not a shader mode. The starfield stays exactly as it is, on top.
+- **`matrix` command:** the same stir, **plus** a monochrome-green tint defined as `stir({ intensity: 1, durationMs: 6000 }) + tint({ color: matrixGreen, rampMs: 500, holdMs: 4500 })` — the tint clock lives inside the stir clock (~5s tint within ~6s stir). `tint` ramps the independent `uTint` overlay uniform (amount 0→1 + color) that pulls the field to a single green, holds, then releases onto the *current* theme palette. The palette is restored exactly; the tint must not persist past its duration even if the theme changes mid-effect (§6.9: theme crossfade composes underneath `uTint`).
 - Both effects are **skipped entirely** under reduced motion and wherever no live sim exists (blob fallback, WebGL unsupported, context lost, or before the module has arrived). Being on the Low *tier* is not a reason to skip — the sim is live at every tier. A command must still print its terminal output in every case: the easter egg degrades, it does not vanish.
 - Only one effect at a time (unchanged existing rule): `canvasEffect()`'s `particleMode !== "drift"` guard extends to the fluid calls too.
 
@@ -571,12 +651,9 @@ An in-flight crossfade interrupted by a second toggle must restart from the *cur
 | Lifted terracotta | `rgb(54,149,167)` on `rgb(201,106,88)` | **1.05:1** ✗✗ | Deep oxblood | `rgb(181,235,239)` on `rgb(74,20,16)` | **11.50:1** ✓ |
 | Cobalt | `rgb(196,125,9)` on `rgb(59,130,246)` | **1.10:1** ✗✗ | Deep cobalt | `rgb(231,203,145)` on `rgb(24,52,110)` | **7.60:1** ✓ |
 
-**Read the table before planning any work here.** The danger is the **light theme**, not cobalt in particular: two anchors fail at roughly 1:1 — the glyph and its backdrop are the same brightness, so the nav effectively disappears over the terracotta and cobalt regions — and amber fails outright at 3.54:1. The dark theme passes everywhere with margin, because deep anchors invert to *light* glyphs. This is a near-certain failure, not a risk to be discovered later, and the plan must reflect that.
+**Read the table before planning any work here.** The danger is the **light theme**, not cobalt in particular: two anchors fail at roughly 1:1 — the glyph and its backdrop are the same brightness, so the nav effectively disappears over the terracotta and cobalt regions — and amber fails outright at 3.54:1. The dark theme passes everywhere with margin, because deep anchors invert to *light* glyphs. This is a near-certain failure, not a risk to be discovered later, and the plan must reflect that. The table assumes flat-anchor backdrops as a worst-case illustration; the real backdrop is blended fluid + scrim + vignette, so the §6.7 rendered-pixel re-confirmation governs.
 
-- **Contingency, in preference order — with (2) as the expected default rather than a last resort:**
-  1. Nudge the offending **light-theme** anchor values within their own AA budget for black type (the palette is media-only, so this is cheap) — but note that a nudge large enough to fix a 1.05:1 result would destroy the anchor's identity. Treat this as a partial mitigation only.
-  2. **Scope the difference blend to the hero's scroll range** and resolve the nav to `var(--text)` once it is over opaque content. This is the recommended default: it keeps the blend *exactly where the user asked for it* — over the fluid, which is the whole reason the blend is charming — and gives deterministic contrast over the light and obsidian bands.
-  3. Drop the blend entirely for a surface-aware nav colour. Fully predictable; it is also a visible regression to a load-bearing piece of the existing design, so it is the last resort.
+- **Decision (locked): scope the difference blend to the hero's scroll range** and resolve the nav to `var(--text)` once it is over opaque content. This keeps the blend *exactly where it was asked for* — over the fluid, which is the whole reason the blend is charming — and gives deterministic contrast over the light and obsidian bands. Nudging the light-theme anchors is a partial mitigation only (a nudge large enough to fix 1.05:1 would destroy the anchor's identity). Dropping the blend entirely remains the last resort.
 - **Do not ship a legibility failure because the blend is charming.** The user's instruction was to keep the blend *and verify it* — the verification above is the answer, and acting on it is completing that instruction, not overriding it.
 - The nav is `position: fixed` and unaffected by the canvas; no z-index or blend change is otherwise required.
 
@@ -589,16 +666,20 @@ Every row must end in a complete, readable, scrollable page. This table is the c
 | Condition | Hero | Echo | Mechanism |
 |---|---|---|---|
 | Everything works | Fluid (tier per §6.10) | Fluid, quarter scale | Primary path |
-| Playable but slow module (blocked/3G) | Blob wash until `fluid:ready`, then 0.6s cross-fade to fluid if inside the 3s deadline | Follows the hero | §3 resolution rule 2 — the one permitted blob→fluid handoff |
-| Reduced motion | One static frame, frozen | One static frame, frozen | §6.12 — context kept, never stepped; re-rendered on resize/visibility. Visible because the CSS reduced-motion block does **not** hide `.ambient` |
+| Playable but slow module (blocked/3G) | Blob wash until `fluid:ready`, then 0.6s cross-fade to fluid if inside the 3s deadline from `heroReveal()` | Follows the hero | §3 resolution rule 2 — the one permitted blob→fluid handoff |
+| Reduced motion | One static frame, frozen | One static frame, frozen | §6.12 — context kept, never stepped; display-only re-draw on visibility, deterministic re-seed on resize/theme. Visible because the CSS reduced-motion block does **not** hide `.ambient` |
+| Reduced motion × no WebGL | Blob wash, static | Plain band | Blobs are visible-but-static under the CSS reduced-motion block; no canvas exists |
 | JS disabled | **Plain `var(--bg)` hero — no wash** | Plain band | Unchanged existing behaviour: the `<noscript>` rule hides `.ambient` entirely. No canvas exists (JS creates them). |
 | Module blocked / MIME wrong / OGL 404 | Blob wash, animated | Plain band | `fluid:ready` never fires → 3s deadline → blob path, permanent for the session (§3) |
-| WebGL unavailable or context creation error | Blob wash, animated | Plain band | OGL's renderer construction throws (or returns an unusable context) → `status: "unsupported"`. No probe context is left live (§6.1) |
-| Device misses Low tier | Blob wash (0.6s cross-fade) | Static band | §6.10 terminal state + deliberate context loss |
-| Context lost mid-session | Blob wash (0.6s cross-fade) | Static band | §6.11, no restore attempt, no persistent downgrade |
+| WebGL unavailable or context creation error | Blob wash, animated | Plain band | Thrown OGL `Renderer` constructor → `status: "unsupported"`. No probe context is left live (§6.1) |
+| Float render targets unsupported (RGBA8 fallback) | Fluid, reduced gradient fidelity | Fluid, quarter scale | §6.1 fallback row — still the primary path, not a blob row; heavier dither covers banding |
+| Hero OK, echo context dropped (likeliest iOS 2-context failure) | Fluid | Plain obsidian band | **Hero wins**: the echo yields its context first and never contends with the hero; per-instance `visible=false` + canvas fade (§6.11); hero unaffected |
+| Theme toggled before `fluid:ready` | Blob wash, then fluid in current theme | Follows the hero | `setTheme` is a no-op until `init`; `init` reads live tokens |
+| Device misses Low tier | Blob wash (0.6s cross-fade) | Plain obsidian band | §6.10 terminal state + deliberate context loss |
+| Context lost mid-session | Blob wash (0.6s cross-fade) | Plain obsidian band | §6.11, no restore attempt, no persistent downgrade |
 | `main.js` throws during init | Blob wash, static | Static band | existing `catch` adds `no-anim`, removes `js-reveal`/`boot`, calls `lenis?.start()` |
 | CDN fully blocked (GSAP too) | Today's static page | Static band | existing `no-anim` path, unchanged |
-| Tab hidden / hero off-viewport | Paused | Paused | §4 visibility discipline — mandatory, not an optimization |
+| Tab hidden / hero off-viewport | Paused (iOS sleep may additionally drop contexts → blob fallback on restore) | Paused | §4 visibility discipline — mandatory, not an optimization |
 
 **Hard rule:** nothing in the fluid path may ever be the reason content is hidden. Both canvases are decorative (`aria-hidden="true"`, `pointer-events: none`, created by JS), the scrim is decorative, and **the content is the CSS-visible default** — the wash, with or without JS, is never load-bearing for readability.
 
@@ -615,12 +696,14 @@ The old principle — *"animation must stay inside a strict performance budget (
 2. **One `requestAnimationFrame` driver** stepping both instances, early-returning per instance visibility and on `document.hidden`.
 3. **Paused when not visible** — off-viewport (both instances) and hidden-tab (both). No simulation work is ever done for pixels nobody can see.
 4. **DPR capped at 1.5** (High tier), and **sim resolution separated from display resolution** — the solver never runs at device pixels.
-5. **Fixed pass count per frame.** No pass may be added conditionally at runtime except the optional 1×1 energy reduction (§6.6).
-6. **Frame-time watchdog with a documented ladder** (§6.10): 22 ms budget over a 90-frame window, one-step downgrades, no upgrade-back, and a defined terminal state.
-7. **`readPixels` is permitted only as a 1×1 read at ≤ 0.2 Hz.** Any larger or more frequent readback is a spec violation.
-8. **Third-party payload stays pinned and measured.** OGL is pinned to `1.0.11`; its measured size is recorded in this spec's change log once known (§0 obligations).
+5. **Fixed pass count per frame.** No pass may be added conditionally at runtime. The §6.6 energy reduction runs only on 0.2 Hz sample frames, never every frame.
+6. **Frame-time watchdog with a documented ladder** (§6.10): 22 ms budget over a 90-frame window post-lift (first 10–20 frames excluded), one-step downgrades, no upgrade-back, combined measurement when both instances are visible, and a defined terminal state.
+7. **`readPixels` is permitted only as a 1×1 `RGBA8` read at ≤ 0.2 Hz, and only on the opt-in path** (§6.6). The default is the CPU-side proxy (zero readback). Any larger or more frequent readback is a spec violation.
+8. **Third-party payload stays pinned and measured.** OGL is pinned to `1.0.11`; its measured raw + gzip size is recorded in this spec's change log once known (§0 obligations). Cap: served gzip MUST NOT exceed ~35 KB without a spec revision. LCP MUST NOT regress vs the blob baseline on the target desktop machine (measure once, record).
 9. **The old rules still apply to everything non-WebGL:** transforms/opacity only, no animated `filter`, no layout properties, `will-change` only where genuinely transformed — and **never on either fluid canvas**. A canvas repaints its own pixels and is never transformed, so promoting it buys nothing and costs memory. This is the same conclusion the original build spec already reached for the particle canvas; do not regress it.
-10. **The blob fallback must remain cheaper than the sim it replaces.** It is the degraded path; it may not become a second heavy system.
+10. **The blob fallback must remain cheaper than the sim it replaces.** It is the degraded path; it may not become a second heavy system. Metric: 4 tweens, opacity/transform only, no new layers.
+
+**Enforcement note:** §13 forbids a test runner, so this budget is review-gated, not CI-gated — every item above is a §12 checklist line, not an automated gate.
 
 **Explicitly accepted, and therefore not a defect to "fix":** a real-time fluid simulation is structurally the heaviest thing this page does. It costs a sustained GPU tick while visible. That is the price of the effect the user chose, bounded by tier, pause and watchdog discipline. It is not a regression to be optimized away by quietly reducing quality below the tiers.
 
@@ -632,7 +715,9 @@ The old principle — *"animation must stay inside a strict performance budget (
 - **Decorative layers are hidden from AT:** `aria-hidden="true"` on both canvases and the scrim; `pointer-events: none`; never focusable; no live region.
 - **The fluid adds no focusable element, no ARIA role, and no keyboard interaction.** It must not appear in the tab order or the accessibility tree at all.
 - **Contrast:** measured over rendered fluid at the worst-case frame in both themes, ≥ 4.5:1 for hero type and nav (§6.7, §6.15). The signal band's white type on obsidian and `#a8a8a8` muted text on obsidian are both already verified (8.83:1 for muted).
-- **Motion intensity:** the sim is slow and low-amplitude by design (§6.5) — no strobing, no rapid luminance oscillation, and the dither is static. The `hyperdrive` stir is the only fast effect, it lasts ~6s, it requires an explicit user gesture (the Konami sequence or a typed command), and it is disabled entirely under reduced motion. Nothing on the page can produce a rapid luminance flash.
+- **Forced colors:** `@media (forced-colors: active) { .fluid-canvas, .fluid-echo, .fluid-scrim { display: none; } }` — the canvas cannot honor system-color guarantees, so it yields. Shipping without this rule is a known gap, not an oversight.
+- **Focus over the fluid:** `:focus-visible` keeps its existing `2px solid var(--text)` ring; over the difference-blended nav the ring MUST be verified on rendered pixels alongside the glyph (§6.15).
+- **Motion intensity:** the sim is slow and low-amplitude by design (§6.5) — no strobing, no rapid luminance oscillation, and the dither is static. The `hyperdrive` stir is the only fast effect, it lasts ~6s, it requires an explicit user gesture (the Konami sequence or a typed command), and it is disabled entirely under reduced motion. Verify by eyeball that no effect exceeds 3 flashes/sec (WCAG 2.3.1) — record the check in §12.
 - **The reduced-motion frame is not a degraded corner.** It is the only way a reduced-motion visitor receives the new aesthetic (§2 #14), so it is verified in both themes explicitly in §12 rather than assumed.
 - **No new keyboard trap, no scroll hijack.** The sim reads scroll velocity; it never drives scroll.
 - **`prefers-reduced-transparency` / `prefers-contrast: more`:** out of scope for this revision, but note the scrim is the natural place to hook them if a future change wants to. Do not build it now without a spec revision.
@@ -653,10 +738,16 @@ The old principle — *"animation must stay inside a strict performance budget (
 - **Components:** the signal board becomes an obsidian band implemented by token scoping; the scrim and its containment dependency on opaque `main`/`.footer` get a sentence; the nav's difference blend is recorded **with the computed per-anchor table and whichever contingency was actually applied** (§6.15) — a bare "verified" note would hide the fact that two light-theme anchors failed at 1:1.
 - **Standing detector notes:** record the **OGL 1.0.11 / The Unlicense** dependency and that it is the one third-party script **without an SRI hash** (imported as ESM), so it is a known accepted exception rather than an oversight; note that `--muted-on-fluid` (if it exists) is an intentional second muted token; and add `overused-font`-style notes for anything the new work trips deliberately.
 
+**`index.html`**
+- Exactly one `<script type="module" src="js/fluid.js">` after `main.js`; add `.fluid-scrim` to the existing `<noscript>` hide rule. No canvas markup (JS-created).
+
+**This spec**
+- Append the §0 measurement rows (OGL raw+gzip, tier frame times, rendered-pixel contrast) to the change log once known.
+
 **`js/main.js`**
-- The theme-wipe colour is painted from the retired aurora palette (`#050810` / `#f3f6ff`, line 537) — repaint it from the outgoing theme's actual `--bg` (§6.9).
-- The wipe's duration and ease (`0.7` / `power3.inOut`) become **one shared constant** the fluid crossfade reads, so they cannot drift.
-- `initAmbient()` stops starting the blob tweens unconditionally, stops wiring the cursor glow, and stops seeding particle drift — while leaving the easter-egg modes working (§6.13).
+- The theme-wipe colour is painted from the retired aurora palette (`#050810` / `#f3f6ff`, line 538) — repaint it from the outgoing theme's actual `--bg` (§6.9).
+- The wipe's duration and ease (`0.7` / `power3.inOut`) become `window.THEME_WIPE = { duration: 0.7, ease: "power3.inOut" }`, set at init before `fluid:ready` can fire, and read by both the wipe and the fluid crossfade, so they cannot drift.
+- `initAmbient()` stops starting the blob tweens on the primary path (it already gates on `!reduced`, `js/main.js` 416 — extend the gate to fluid-live), removes the cursor-glow node wiring, and stops seeding particle drift — while leaving the easter-egg modes cold-startable (§6.13).
 
 **`gsap-animated-profile-spec.md`**
 - Header gains **Revision 5 — liquid iridescence** with a changelog row per changed section.
@@ -665,6 +756,7 @@ The old principle — *"animation must stay inside a strict performance budget (
 - §8 (Performance Budget) rewritten to point at this spec's §8.
 - §9 (degradation paths) gains the fluid's rows from §7 here.
 - §12 (definition of done) gains the checklist items from §12 here.
+- Any other section asserting blob-primary ambient, old principle 4, or SRI-everywhere gets a conforming note (sweep §0 baselines, §3 load order, §10 doc-pointer).
 
 ---
 
@@ -674,33 +766,35 @@ The old principle — *"animation must stay inside a strict performance budget (
 |---|---|---|---|---|
 | 1 | **OGL is imported as ESM and therefore cannot carry an `integrity` hash** — the one dependency in this repo without SRI. A jsDelivr compromise or a hijacked package version is not detectable by the browser. | Low | High | Pin the exact version string (`1.0.11`) and never a floating tag; jsDelivr treats pinned-version artifacts as immutable; note it in `DESIGN.md`'s standing notes so it is a known, accepted exception. Note also that OGL is **The Unlicense** — public domain, so there is no licence text or attribution obligation to rely on as a provenance check either. If SRI parity is ever wanted, the escape hatch is vendoring a local build (§2 #22, alternative rejected). |
 | 2 | **Cold start means the first visible frame is a warm-up** — WebGL program compilation, texture allocation and the first splat can stutter exactly when the hero reveal is happening. | Medium | Medium | Compile shaders and allocate targets *inside* `init()` before the bloom ramp begins; only start the ramp once the first frame has actually been drawn. Budget the compile inside the 1.5s ignite rather than after it. |
-| 3 | **Thermal and battery behavior on laptops.** A sustained full-viewport GPU load in a portfolio tab is a real cost to a visitor who leaves the page open. | Medium | Medium | Off-viewport and hidden-tab pausing (mandatory); the tier ladder; `RESEED_FLOOR` keeps idle cost low rather than relying on continuous high-amplitude emitters. Consider (not required) pausing the hero instance when the tab has been hidden for > 60s and requiring a scroll to resume. |
-| 4 | **Second context memory pressure on iOS Safari.** Two contexts plus float render targets is where mobile WebKit starts dropping contexts. | Medium | High | Echo runs at quarter scale with RGBA8 if `EXT_color_buffer_half_float` is absent; both instances pause aggressively; context loss falls back cleanly (§6.11) with no restore attempt; the 3s init timeout means a device that cannot handle two contexts still shows a complete page. |
+| 3 | **Thermal and battery behavior on laptops.** A sustained full-viewport GPU load in a portfolio tab is a real cost to a visitor who leaves the page open. | Medium | Medium | Off-viewport and hidden-tab pausing (mandatory); the tier ladder; the CPU energy proxy keeps idle cost low rather than relying on continuous high-amplitude emitters. Consider (not required) pausing the hero instance when the tab has been hidden for > 60s and requiring a scroll to resume. |
+| 4 | **Second context memory pressure on iOS Safari.** Two contexts plus float render targets is where mobile WebKit starts dropping contexts. | Medium | High | Echo runs at quarter scale with RGBA8 if float renderability is absent; both instances pause aggressively; per-instance context loss falls back cleanly (§6.11) with no restore attempt; the 3s post-reveal deadline means a device that cannot handle two contexts still shows a complete page. |
 | 5 | **Banding** across large low-contrast gradients — the classic failure of a four-anchor field at 8-bit. | High | Low | Mandatory shader dither (§6.8); RGBA16F where available; the vignette also masks the corners where gradients are flattest. |
-| 6 | **Difference-blend legibility over cobalt** — white text difference-blended over `#3b82f6` resolves to a similar-luminance hue (§6.15). | Medium | Medium | Verification is a checklist item across all four anchors, with a three-step contingency in preference order. Do not ship on the assumption that it will be fine. |
+| 6 | **Difference-blend legibility over terracotta and cobalt** — white text difference-blended over the lifted-terracotta and cobalt anchors resolves to similar-luminance glyphs (§6.15: 1.05:1, 1.10:1). | Medium | Medium | Locked decision: scroll-scoped blend (§6.15). Do not ship full-page blend on the assumption that it will be fine. |
 | 7 | **Light-theme AA over a bright fluid** — amber at 11.1:1 on black is comfortable, but blended mid-tones and the tagline's `--muted` are not automatically safe. | Medium | Medium | Both the luminance floor and the light scrim are required (§6.7); measure rendered pixels, not palette values; `--muted-on-fluid` exists precisely for this. |
-| 8 | **Idle reseed readback stall** — a `readPixels` stall once per 5s could read as a periodic micro-hitch on slower devices. | Low | Low | 1×1 readback only; if observed, switch to the CPU-side energy proxy rather than shortening the interval. |
+| 8 | **Idle reseed readback stall** — a `readPixels` stall once per 5s could read as a periodic micro-hitch on slower devices. | Low | Low | CPU-side proxy is the default (zero readback); the 1×1 RGBA8 readback is opt-in only, sample frames only. |
 | 9 | **Scope creep in couplings** — §6.4 fixes the coupling list at three; every addition is a permanent per-frame cost on every device. | Medium | Low | The list is normative; a fourth coupling requires a spec revision. |
 | 10 | **Hidden-cost regression: the boot overlay's 4–5s window.** Cold start is the chosen design, but any future "warm it up behind boot" change silently adds seconds of GPU work to every load. | Low | Medium | Recorded as a deliberate consequence of **§2 #12**; a future reader must see that it was chosen, not missed. |
 | 11 | **Retiring particle drift breaks the easter eggs** if `seed()` and the mode functions co-depend on dot state that no longer exists (§6.13). | Medium | Low | Explicitly called out as a verification item; modes must cold-start their own state. |
-| 12 | **Tier probe false negatives** — a slow first 90 frames (font loading, stats fetch, reveal choreography) could downgrade a capable machine. | Medium | Medium | Probe begins only after the boot overlay has lifted and the first render has completed; 22 ms is deliberately loose; downgrades are one step and never reversible in-session, so a single false negative costs one tier, not the effect. |
-| 13 | **The blob→fluid handoff is a visible change of weather.** On a skipped boot with a slow module, the visitor sees the blob wash, then a 0.6s cross-fade to the fluid. | Medium | Low | Bounded to one occurrence per page load, gated by the 3s deadline, and it is a cross-fade rather than a cut. The alternative — waiting indefinitely on a blank hero — is worse. If it proves distracting in practice, the fix is to raise the initial tier's splat amplitude so the incoming field is immediately legible, not to remove the handoff. |
-| 14 | **Crossfade desynchronisation from the wipe** — the two use different timing sources (CSS ease vs GSAP) today. | Medium | Low | One shared constant for duration and ease, read by both (§6.9). This is exactly the defect Revision 1 had on paper. |
+| 12 | **Tier probe false negatives** — a slow first 90 frames (font loading, stats fetch, reveal choreography) could downgrade a capable machine. | Medium | Medium | Probe starts after the first presented frame post-lift with the first 10–20 frames excluded (§6.10); 22 ms is deliberately loose; downgrades are one step and never reversible in-session, so a single false negative costs one tier, not the effect. |
+| 13 | **The blob→fluid handoff is a visible change of weather.** On a skipped boot with a slow module, the visitor sees the blob wash, then a 0.6s cross-fade to the fluid. | Medium | Low | Bounded to one occurrence per page load, gated by the 3s post-reveal deadline, and it is a cross-fade rather than a cut. The alternative — waiting indefinitely on a blank hero — is worse. If it proves distracting in practice, the fix is to raise the initial tier's splat amplitude so the incoming field is immediately legible, not to remove the handoff. |
+| 14 | **Crossfade desynchronisation from the wipe** — the two use different timing sources (CSS ease vs GSAP) today. | Medium | Low | `window.THEME_WIPE` shared constant read by both (§6.9). This is exactly the defect Revision 1 had on paper. |
 | 15 | **The wipe's stale colours** become visible against the new fluid (`#050810` over a cobalt/sage field reads as a colour cast). | High | Low | Fixed in the same change: paint the wipe from the outgoing theme's `--bg` (§6.9, §10). |
 
 ---
 
 ## 12. Definition of done
 
+**Normative keywords.** MUST = verification gate (ship-blocker); SHOULD = default with a recorded exception in the change log. Present-tense prose in §§1–12 reads as MUST unless marked otherwise.
+
 **Code-complete** means:
 
-- [ ] `js/fluid.js` exists as an ES module, imports OGL `1.0.11` from the pinned `+esm` URL, exposes `window.Fluid` (`init`, `stir`, `tint`, `setTheme`, `freeze`, `destroy`, `status`), and dispatches `fluid:ready`.
-- [ ] `index.html` gains exactly one `<script type="module" src="js/fluid.js">`, **placed after `main.js`** (last script in the head). No other head change, other than adding `.fluid-scrim` to the existing `<noscript>` hide rule.
-- [ ] Neither canvas appears in `index.html` markup — both are created and appended by `fluid.js`.
-- [ ] The theme-wipe duration/ease live in one shared constant used by both the wipe and the fluid crossfade, and the wipe is painted from the outgoing theme's `--bg`.
-- [ ] `css/style.css` gains the §5.4 tokens, the `.fluid-canvas` / `.fluid-echo` / `.fluid-scrim` rules, and the obsidian signal band (token scoping, not rewritten rules). The `.blob` block stays as the fallback, and its four per-blob tweens are paused — never killed — while the sim is live.
-- [ ] `js/main.js` integrates through the readiness contract (§3), drives the hero instance from `heroReveal()`, and wires the three couplings in §6.4. `initAmbient()` no longer starts the blob tweens unconditionally, no longer wires a cursor glow, and no longer seeds particle drift.
-- [ ] The particle canvas no longer runs `drift`; `hyperdrive` and `matrix` still work from a cold start.
+- [ ] `js/fluid.js` exists as an ES module, imports OGL `1.0.11` from the pinned `+esm` URL, exposes the §6.14 `window.Fluid` IDL (`init`, `stir`, `tint`, `setTheme`, `freeze`, `destroy`, `status`), and dispatches `fluid:ready`.
+- [ ] `index.html` gains exactly one `<script type="module" src="js/fluid.js">`, **placed after `main.js`** (last deferred script in document order). No other head change, other than adding `.fluid-scrim` to the existing `<noscript>` hide rule.
+- [ ] Neither canvas appears in `index.html` markup — both are created and appended by `fluid.js`, as is the `.fluid-scrim` div (sibling of `.ambient`).
+- [ ] The theme-wipe duration/ease live in `window.THEME_WIPE` used by both the wipe and the fluid crossfade, and the wipe is painted from the outgoing theme's `--bg`.
+- [ ] `css/style.css` gains the §5.4 tokens (including `--media-*-deep` and provisional `--muted-on-fluid`), the `.fluid-canvas` / `.fluid-echo` / `.fluid-scrim` rules, the forced-colors hide rule, and the obsidian signal band (token scoping, not rewritten rules). The `.blob` block stays as the fallback, and its four per-blob tweens are paused — never killed — while the sim is live.
+- [ ] `js/main.js` integrates through the readiness contract (§3: named handler, both-arm teardown, `fluidCommitted` guard, post-reveal 3s deadline, `heroFluidStarted` guard), drives the hero instance from `heroReveal()`, and wires the three couplings in §6.4. `initAmbient()` no longer starts the blob tweens on the primary path, the `#cursor-glow` node is removed from markup/CSS/wiring, and particle drift is no longer seeded.
+- [ ] The particle canvas no longer runs `drift`; `hyperdrive` and `matrix` cold-start their own dot state and still work.
 - [ ] `PRODUCT.md`, `DESIGN.md` and `gsap-animated-profile-spec.md` updated per §10.
 - [ ] No new UI color token. No chromatic text, border, badge or fill anywhere.
 
@@ -714,20 +808,25 @@ The old principle — *"animation must stay inside a strict performance budget (
 - [ ] **Scroll:** fast scrolling visibly stirs, stopping lets it settle. Scrolling past the hero stops the hero instance (verify in DevTools that frame work drops).
 - [ ] **Signal band:** obsidian in both themes; the echo reads as a quiet recurrence, never a competing effect; the cards still sit on identical box dimensions (zero CLS).
 - [ ] **Theme toggle:** the fluid's palette changes in sync with the wipe, with no visible seam and no reset of the flow.
-- [ ] **Nav:** wordmark and links legible over each of the four anchors — specifically check over cobalt.
+- [ ] **Nav:** wordmark and links legible over each of the four anchors in the hero range; nav resolves to `var(--text)` past the hero (locked §6.15 decision). Focus ring verified on rendered pixels too.
 - [ ] **Ghost pill hover:** hovering a CTA produces one soft warm bloom beneath it, not a splat.
 - [ ] **Terminal:** typing ripples the fluid.
-- [ ] **Konami:** starfield plus a violent stir that decays back to calm. **`matrix`:** stir plus a green tint that fully releases afterwards.
+- [ ] **Konami:** starfield plus a violent stir that decays back to calm. **`matrix`:** stir plus a green tint that fully releases afterwards. No effect exceeds 3 flashes/sec.
 - [ ] **Reduced motion:** exactly one frozen frame of a *composed* liquid (not an empty field) in both themes; nothing animates; scrolling is smooth and nothing is blocked.
-- [ ] **JS disabled:** blob wash, static, complete page.
-- [ ] **Module blocked** (block `js/fluid.js` in DevTools): blob wash, complete page, no console errors.
+- [ ] **JS disabled:** plain `var(--bg)` hero (no wash — unchanged behaviour), complete page.
+- [ ] **Module blocked** (block `js/fluid.js` in DevTools): blob wash, complete page, no uncaught exception breaks the page (network 404 noise in the console is expected).
 - [ ] **OGL CDN blocked** (block `cdn.jsdelivr.net/npm/ogl*`): blob wash, complete page.
 - [ ] **WebGL forced off** (launch flag or `--disable-webgl`): blob wash, complete page.
 - [ ] **Context loss:** trigger via `WEBGL_lose_context` → clean 0.6s cross-fade to blobs, no black canvas, no error dialog, page fully usable.
+- [ ] **Echo-only failure:** drop the echo context → plain obsidian band, hero unaffected.
 - [ ] **Mobile (real device, both themes):** either the sim runs at an acceptable frame rate or it lands on the blob wash — never a stuttery sim, never a blank hero. Scroll stays native.
-- [ ] **Tab hidden** for several minutes then restored: no runaway CPU, sim resumes correctly.
-- [ ] **Fast connection:** hero goes straight to the fluid on boot lift — no blob flash before it.
-- [ ] **Throttled connection** (DevTools "Slow 3G"): blob wash (not a blank hero) is visible, then either one clean 0.6s cross-fade to the fluid inside the 3s deadline, or the blob wash persists for the whole session. Never a blank hero, never a late unexplained swap.
+- [ ] **Tab hidden** for several minutes then restored: no runaway CPU, sim resumes correctly (or clean blob fallback on iOS sleep).
+- [ ] **Fast connection:** hero reaches the fluid on boot lift with no prolonged blob flash — a single clean handoff at most (zero-frame handoff is ideal but not guaranteed since viability is unknowable pre-`fluid:ready`).
+- [ ] **Throttled connection** (DevTools "Slow 3G"): blob wash (not a blank hero) is visible, then either one clean 0.6s cross-fade to the fluid inside the 3s post-reveal deadline, or the blob wash persists for the whole session. Never a blank hero, never a late unexplained swap.
+- [ ] **Double theme-toggle mid-crossfade:** no snap, no stuck palette; second ramp restarts from the interpolated state.
+- [ ] **Resize:** never a blank field; running instances mini-reseed, frozen instances re-render deterministically.
+- [ ] **Low-tier terminal state:** cross-fade to blobs, context actually released, one-way for the session.
+- [ ] **Keyboard-only:** tab order and focus visibility unchanged; no new focusable node.
 - [ ] **Wipe colour:** toggling theme shows a wipe painted in the *outgoing* theme's background colour — no navy-vs-black colour cast crossing the page.
 - [ ] **Payload record:** OGL's measured raw + gzip size, and the measured average frame time at each tier the dev machine can reach (§0 obligations 1 and 4), are recorded in this spec's change log.
 
