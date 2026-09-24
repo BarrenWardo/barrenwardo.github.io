@@ -413,6 +413,8 @@ These tokens are the **single source of truth**. `js/fluid.js` reads them with `
 }
 ```
 
+**`--page-bg` is an alias, not a new color.** Inside the band scope `var(--bg)` resolves to obsidian, but the edge fades must melt into the *page* background — so `--page-bg` carries the outer `--bg` value per theme (light `#ffffff`, dark `#000000`) for exactly the two `::before`/`::after` fade overlays. No new hue enters the interface palette; §12's "no new UI color token" stands.
+
 ---
 
 ## 6. Feature specification

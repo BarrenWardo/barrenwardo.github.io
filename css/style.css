@@ -8,7 +8,7 @@
   --text: #000000;
   --muted: #6d6d6d;
   --line: #000000;
-  --page-bg: #ffffff;   /* page background, captured outside the obsidian band */
+  --page-bg: #ffffff;   /* alias of --bg for use INSIDE the obsidian band scope (spec §5.4) */
   --ease: cubic-bezier(0.19,1,0.22,1);
   color-scheme: light;
 

@@ -17,6 +17,8 @@
   let heroFluidReady = false;
   let echoFluidStarted = false;
   let fluidCommitted = false;
+  let fluidDeadline = 0;
+  let fluidVisibilityInstalled = false;
   let seedDots = null;
   let dotsExist = () => false;
 
@@ -85,6 +87,7 @@
     fluidCommitted = true;
     window.removeEventListener("fluid:ready", onFluidReady);
     startHeroFluidOnce();
+    initFluidVisibility();   // module arrived late: install pausing now (§4)
   }
 
   /* The only entry point that may create the hero sim — guarded, so boot
@@ -98,16 +101,18 @@
   /* Deadline is anchored to the reveal, not to script init: init runs under the
      opaque boot overlay, where a 3s window would already have expired (spec §3). */
   function beginFluidWindow() {
-    if (!window.Fluid || window.Fluid.status !== "ready") {
-      window.addEventListener("fluid:ready", onFluidReady, { once: true });
-      setTimeout(() => {
-        if (fluidCommitted) return;
-        fluidCommitted = true;            // permanent for this page load
-        window.removeEventListener("fluid:ready", onFluidReady);
-      }, 3000);
+    if (fluidCommitted) return;
+    if (window.Fluid && window.Fluid.status === "ready") {
+      startHeroFluidOnce();
       return;
     }
-    startHeroFluidOnce();
+    fluidDeadline = performance.now() + 3000;
+    window.addEventListener("fluid:ready", onFluidReady, { once: true });
+    setTimeout(() => {
+      if (fluidCommitted) return;
+      fluidCommitted = true;            // permanent for this page load
+      window.removeEventListener("fluid:ready", onFluidReady);
+    }, Math.max(0, fluidDeadline - performance.now()));
   }
 
   function fluidInject(splat) {
@@ -179,7 +184,9 @@
      also created lazily here, so only one WebGL context exists until the band is
      actually approached — which keeps the likeliest iOS failure from happening. */
   function initFluidVisibility() {
+    if (fluidVisibilityInstalled) return;
     if (typeof ScrollTrigger === "undefined" || !window.Fluid) return;
+    fluidVisibilityInstalled = true;
     ScrollTrigger.create({
       trigger: ".hero", start: "top top", end: "bottom top",
       onToggle: (self) => { try { window.Fluid.setVisible("hero", self.isActive); } catch (e) { /* noop */ } }
@@ -230,9 +237,9 @@
   function heroReveal() {
     if (heroRevealed) return;
     heroRevealed = true;
+    beginFluidWindow();
     if (typeof gsap === "undefined") return;
     const reduced = isReduced();
-    beginFluidWindow();
 
     if (typeof SplitText !== "undefined") {
       try {
@@ -520,7 +527,7 @@
         const v = self.getVelocity();
         const boost = gsap.utils.clamp(1, 6, 1 + Math.abs(v) / 1200);
         gsap.to(ringTl, { timeScale: boost, duration: 0.6, ease: "power2.out", overwrite: true });
-        /* Coupling 4: scroll velocity pushes the fluid while scrolling. The sim's
+        /* Drive 3: scroll velocity pushes the fluid while scrolling. The sim's
            own splat cap absorbs the event rate; this only gates the threshold. */
         if (heroFluidReady && Math.abs(v) > 250) {
           fluidInject({
@@ -619,7 +626,8 @@
   function initAmbient() {
     if (typeof gsap === "undefined") return;
     const reduced = isReduced();
-    if (!reduced) {
+    const fluidLive = !!(window.Fluid && window.Fluid.status === "ready" && heroFluidStarted);
+    if (!reduced && !fluidLive) {
       /* Plain per-blob tweens (not a timeline), kept in an array so the fluid
          handoff can PAUSE and RESUME them. Never killed: that is what makes the
          fallback a resume instead of a rebuild (spec §6.11). */
