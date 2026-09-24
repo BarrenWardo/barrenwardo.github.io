@@ -24,7 +24,8 @@ Static site served by GitHub Pages from `main` at `https://git.barren.eu.org/` (
 
 ## Capabilities and Constraints
 
-- Static files at repo root (`index.html`, `css/style.css`, `js/main.js`); third-party animation/scroll libraries pinned on CDN with integrity hashes.
+- Static files at repo root (`index.html`, `css/style.css`, `js/main.js`, `js/fluid.js`); third-party animation/scroll libraries pinned on CDN with integrity hashes. `js/fluid.js` is the one exception: it is an ES module importing a version-pinned OGL from jsDelivr, because an ESM import cannot carry an `integrity` attribute — the exact version string is the whole guarantee there.
+- The ambient media layer is a real-time WebGL fluid simulation with a documented fallback: if WebGL is unavailable, the module is blocked or slow, the device misses the lowest quality tier, or the context is lost, the page falls back to the pre-existing CSS blob wash and never leaves a blank hero.
 - The page must degrade to a complete, readable, scrollable static page with JavaScript disabled, with the CDN blocked, or after any init error.
 - Motion respects `prefers-reduced-motion` fully (no boot overlay, no ambient motion, instant values); body text meets WCAG AA in both themes.
 - Explicitly undecided product facts: the `Py-Books` card description is a neutral placeholder (no GitHub description exists); third project pick (`kserve-skills` vs `modal`) is open; no `og-image` asset exists so no `og:image` is shipped.
@@ -45,7 +46,7 @@ Current facts, not binding constraints: the name Barren Wardo; the lines "AI afi
 1. Honesty over hype — show real numbers and volunteer the unflattering split (e.g. fork ratio) rather than letting visitors discover it.
 2. Play is the point — the terminal, Konami code, and matrix effects are first-class features, not decoration.
 3. Never a blank page — every failure path (no JS, blocked CDN, thrown error, rate limit) still leaves a complete, readable site.
-4. Motion is earned — animation must respect reduced-motion settings and stay inside a strict performance budget (transforms only, capped particles, one loop).
+4. Motion is earned — animation must respect reduced-motion settings and stay inside a WebGL-aware performance budget: at most two WebGL contexts (hero fluid + quarter-scale echo), one rAF driver stepping both, paused off-viewport and on hidden tabs, a frame-time watchdog with documented downgrade tiers, and a defined terminal fallback. Non-WebGL motion keeps the old rule (transforms/opacity only, no animated `filter`, no layout properties). Full budget and tier ladder: `liquid-iridescence-spec.md` §8, §6.10.
 5. No rot by default — derived values (years on GitHub, footer year, BIOS version) compute at runtime; fallbacks carry visible freshness stamps.
 
 ## Accessibility & Inclusion

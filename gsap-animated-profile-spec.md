@@ -1,7 +1,7 @@
 # Spec — GSAP Animated Profile for barrenwardo.github.io
 
-**Status:** Revision 4 — buildable
-**Date:** 2026-09-23
+**Status:** Revision 5 — buildable; §5.3, §6.7, §8, §9 and §12 amended by liquid iridescence
+**Date:** 2026-09-24 (Revision 4: 2026-09-23)
 **Repo:** `BarrenWardo/barrenwardo.github.io` (branch `main`)
 **Live domain:** `git.barren.eu.org` (via `CNAME` file — untouched)
 **Reference skills:** `.agents/skills/gsap-core`, `gsap-timeline`, `gsap-scrolltrigger`, `gsap-plugins`, `gsap-performance`, `gsap-utils` (official GreenSock, MIT, installed via `npx skills add https://github.com/greensock/gsap-skills`). `gsap-react` and `gsap-frameworks` are installed but **not applicable** — this build is vanilla JS, no framework. Implementation must follow the six applicable skills.
@@ -11,6 +11,19 @@
 ---
 
 ## Change logs
+
+### Revision 5 — liquid iridescence (ambient media replaced)
+
+`liquid-iridescence-spec.md` replaces this build's ambient media layer with a real-time WebGL fluid simulation, so the sections below that described the blobs as the ambient system, the old performance budget, and "SRI everywhere" no longer hold. **Nothing outside the ambient layer changes:** the boot choreography, hero, orbit, signal board, projects, footer, theme toggle, easter eggs, reduced-motion behavior and the whole §12 checklist stand except where listed.
+
+| # | Section | Change |
+|---|---|---|
+| 1 | §5.3 | Aurora blobs are now the **fallback**, not the implementation. `filter: blur()` stays prohibited for them; the primary media layer renders its gradient in-shader on a canvas instead of in CSS. |
+| 2 | §6.7 | Ambient items 1 (blobs) and 3 (cursor glow) are reassigned: the blobs become the paused fallback path, the cursor glow is **retired** — the fluid answers the pointer directly and a second pointer-following layer would advertise it twice. Particles lose `drift` (the fluid is the ambient layer) and survive only for the `hyperdrive`/`matrix` easter eggs. Grain and the progress bar are unchanged. |
+| 3 | §8 | The budget is **replaced** by `liquid-iridescence-spec.md` §8 (two WebGL contexts, one rAF driver, visibility pausing, DPR cap, fixed pass count, frame-time watchdog ladder, terminal fallback). The old rules still bind everything non-WebGL: transforms/opacity only, no animated `filter`, no layout properties, and never `will-change` on a canvas. |
+| 4 | §9 | Degradation paths gain the fluid rows from `liquid-iridescence-spec.md` §7 — every one of them still ends in a complete, readable, scrollable page. |
+| 5 | §3 | One new script: `js/fluid.js`, a `type="module"` importing a version-pinned OGL, placed **after** `main.js` so a slow module fetch can never delay the boot choreography. It is the one dependency **without** an `integrity` hash — an ESM import cannot carry one, so the exact version string is the guarantee. |
+| 6 | §12 | Definition of done adds `liquid-iridescence-spec.md` §12's fluid checklist. |
 
 ### Revision 4 — final review
 
@@ -177,7 +190,7 @@ Every token is verified against **both** surfaces in its theme, because most tex
 ### 5.3 Texture
 
 - **Grain:** inline SVG `feTurbulence` data-URI, `opacity ≈ 0.05`, `pointer-events: none`, `position: fixed`, `z-index` above content. Static — no animation, no per-frame cost.
-- **Aurora blobs:** **pre-blurred radial gradients**, never `filter: blur()`:
+- **Aurora blobs:** now the hero's **fallback** wash (Revision 5). **Pre-blurred radial gradients**, never `filter: blur()`:
   ```css
   .blob {
     background: radial-gradient(circle at 50% 50%,
@@ -395,11 +408,11 @@ Names, stars and languages are verified. All three accents now clear AA on `--bg
 
 ### 6.7 Ambient Layer (behind content)
 
-User selected **all four** plus "anything relevant". All four kept, made affordable:
+User selected **all four** plus "anything relevant". All four kept, made affordable. **Revision 5 amends items 1–3:** the primary ambient layer is now the fluid (`liquid-iridescence-spec.md`), the blobs are its paused fallback, and the cursor glow is retired.
 
-1. **Aurora blobs:** 4 pre-blurred radial-gradient divs (§5.3 — **no `filter: blur`**); each on an infinite yoyo timeline (`x`/`y`/`scale`, 18–40s, randomized via `gsap.utils.random`, `sine.inOut`). Only 2 render on mobile.
-2. **Particles:** single `<canvas>`, **24 dots desktop / 12 mobile**, drifting slowly upward, `gsap.ticker`-driven. **Pause on `visibilitychange` and when off-viewport** via `ScrollTrigger` `onToggle`.
-3. **Cursor glow:** fixed radial-gradient div following the pointer via `gsap.quickTo` (`x`/`y`), `pointer-events: none`, **desktop `pointer: fine` only, off under reduced motion**. Keep `mousemove` work to the `quickTo` writes only.
+1. **Aurora blobs:** 4 pre-blurred radial-gradient divs (§5.3 — **no `filter: blur`**); each on an infinite yoyo timeline (`x`/`y`/`scale`, 18–36s, randomized via `gsap.utils.random`, `sine.inOut`). Only 2 render on mobile. **Fallback only:** paused (never killed) and hidden once the fluid's first frame is up, resumed as the hero's wash on any fluid failure path.
+2. **Particles:** single `<canvas>`, **24 dots desktop / 12 mobile**. Driven by its own rAF. `drift` is **retired** (Revision 5) — the fluid is the ambient layer now — so the canvas renders nothing until `hyperdrive` or `matrix` cold-starts its own dot state; the `hyperdrive`/`matrix` modes are unchanged. **Pause on `visibilitychange` and when off-viewport** via `ScrollTrigger` `onToggle` (stepping only, never mode entry).
+3. **Cursor glow:** **retired** (Revision 5) — node, CSS rule and `quickTo` wiring removed. The fluid answers the pointer directly, and a second pointer-following layer would sit above it and advertise the pointer twice.
 4. **Grain:** static SVG-noise overlay (§5.3).
 5. **Scroll progress bar:** 2–3px gradient bar, `scaleX: 0 → 1` scrubbed across the document:
    ```js
@@ -630,8 +643,10 @@ destroy() { /* ... */ this.cleanUpClassName(); ... }  // removes every `lenis-*`
 
 ## 8. Performance Budget
 
+**Revision 5: the budget for the WebGL media layer is `liquid-iridescence-spec.md` §8** (two contexts maximum, one rAF driver, paused when not visible, DPR capped at 1.5, fixed pass count, frame-time watchdog with a documented tier ladder, pinned and measured third-party payload). The rules below still bind everything non-WebGL, including the blob fallback.
+
 - **Transforms/opacity only.** No layout properties (`width`, `height`, `top`, `left`, `margin`, `padding`) — per `gsap-core` and `gsap-performance`.
-- **No animated `filter`.** Blobs are pre-blurred gradients (§5.3); `filter` on a moving layer re-rasterizes every frame.
+- **No animated `filter`.** Blobs are pre-blurred gradients (§5.3) and the primary media layer renders its gradient in-shader on a canvas; neither animates a CSS `filter`, which on a moving layer re-rasterizes every frame.
 - `will-change: transform` on the aurora blobs only. Not on `*`, not "just in case", and not on the particle canvas — the canvas repaints its own pixels and is never transformed, so promoting it buys nothing.
 - **Particles:** 24 desktop / 12 mobile; paused when the tab is hidden and when off-viewport.
 - **Fonts load off the critical path.** The Google Fonts stylesheet is the last render-blocking request on the page and sits directly in front of the LCP candidate §6.1 engineers, so load it non-blockingly and let `display=swap` paint text in the system fallback immediately:
@@ -674,6 +689,8 @@ index.html          # semantic single-page markup, meta, favicon, inline theme/b
                     # deferred main.js
 css/style.css       # design tokens (both themes), layout, textures, inlined Lenis CSS (§6.11),
                     # no-anim/noscript fallbacks
+js/fluid.js         # the fluid sim (§6.7 revision): OGL ESM module, two instances,
+                    # drives/couplings, tiers, context loss, reduced-motion frame
 js/main.js          # registerPlugin; Lenis init gated on pointer:fine + gsap.ticker wiring;
                     # heroReveal(); boot, stats fetch/cache, orbit, batch reveals, ambient canvases,
                     # theme toggle, easter eggs, matchMedia orchestration
@@ -709,6 +726,7 @@ Untouched: `README.md`, `_config.yml`, `CNAME`.
 12. **Scroll never locks up:** the page scrolls freely after boot completes, after a skip at 0.15s, after a skip triggered twice, and after a forced error in `init()`. Repeat the whole boot cycle several times in a row — an unbalanced `lenis.stop()`/`start()` only surfaces on a later pass, and the error path is the one that historically failed. Also force the `(pointer: fine)` query to stop matching **while boot is still active** (e.g. toggle device emulation mid-boot): the page must be scrollable once the overlay is gone, which is the check that covers the `matchMedia` teardown path.
 13. **Name reveal is visible:** the hero name animation plays *after* the overlay lifts, not behind it. (Regression guard for the §6.2 timing fix.)
 14. **Fonts are non-blocking:** the Google Fonts stylesheet does not appear as a render-blocking request in the Network waterfall, and text paints in the fallback stack before it arrives.
+15. **Fluid (Revision 5):** `liquid-iridescence-spec.md` §12 in full. Two highlights that guard this spec's own promises: the module never delays boot (a blocked `cdn.jsdelivr.net/npm/ogl*` still reaches a complete page with the blob wash), and every degradation row ends in a page whose content is visible — neither canvas is ever load-bearing for readability.
 
 ## 13. Open Items / Future
 

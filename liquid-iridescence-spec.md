@@ -1,6 +1,6 @@
 # Spec — Liquid Iridescence (real-time WebGL fluid) for git.barren.eu.org
 
-**Status:** Revision 3 — buildable (nothing implemented yet)
+**Status:** Revision 4 — **implemented** (`js/fluid.js`, `index.html`, `css/style.css`, `js/main.js`; §12 is the remaining manual checklist)
 **Date:** 2026-09-24
 **Repo:** `BarrenWardo/barrenwardo.github.io` (branch `main`, GitHub Pages, no build step)
 **Live domain:** `git.barren.eu.org` (via `CNAME` — untouched)
@@ -14,6 +14,29 @@
 ---
 
 ## Change log
+
+### Revision 4 — implementation record
+
+Revision 3's contract is now built. This revision records only what could not be known from the spec: the measured payload, the strategy that was actually shipped where two were viable, and the review items still owed by hand.
+
+| # | §0 obligation | Result | § |
+|---|---|---|---|
+| 1 | Exact served size of the OGL import | **≈ 38.4 KB gzip / 130.5 KB raw** (`+esm` bundle, HTTP 200, `application/javascript`, 133,629 B decompressed, 39,284 B gzip). **Breaches §8's ~35 KB cap by ~3.4 KB** — cap revised below with reasons. | §0, §8 |
+| 2 | That `+esm` is genuinely 1.0.11 | Satisfied: the path is version-pinned (`ogl@1.0.11`), and the served banner names `Original file: /npm/ogl@1.0.11/src/index.js`. | §0 |
+| 3 | GitHub Pages serves `js/fluid.js` as `application/javascript` | **Outstanding — needs a deploy.** A wrong MIME type fails the module with a console error and the blob wash stays; this is the first thing to check after the next publish. | §0 |
+| 4 | Measured frame time per tier | **Outstanding — needs the target machine and a browser.** Review-gated by §8, not CI-gated. | §0, §12 |
+| 5 | Contrast over rendered fluid pixels | **Outstanding — needs a browser.** The nominal-anchor table in §6.15 is the arithmetic pre-check, not this measurement. | §0, §12 |
+
+**Import strategy — measured alternatives, so this is a decision and not a shrug.** Obligation 1's answer is worse than the cap, and three strategies were measured against each other:
+
+| Strategy | Served gzip | Requests | Note |
+|---|---|---|---|
+| **`+esm` bundle (shipped)** | **38.4 KB** | **1** | Minified rollup of the whole package; one immutable, cache-forever request; classes exist exactly once |
+| Native ESM from `src/**` | 89.4 KB | 64 | The package's own source graph, unminified — what the bundle is saving you from |
+| Subset of `src/**` (the six used modules + closure) | 33.5 KB | 21 | Under the cap, unminified, and 21 requests of serial module discovery |
+| Per-file `+esm` bundles of those six | 19.8 KB | 6 | Smallest, but each bundle inlines its own copy of shared classes — six distinct `Transform`/`Geometry` identities in one page |
+
+The bundle was kept: it is one request on the critical path of a module that has a **3-second deadline from `heroReveal()`** (§3), and 21 sequential requests under a slow connection is how the fluid silently stops appearing on the connections least able to afford a retry. The per-file bundles would trade 18 KB for six copies of the library's class identity, which is the kind of cleverness that breaks silently on a patch release. **3.4 KB over a tilde-approximated cap is the cheaper error**, so the cap is revised rather than the import.
 
 ### Revision 3 — second multi-angle review corrections
 
@@ -110,6 +133,9 @@ Read from the repository, the npm/jsDelivr registry and OGL's own repository on 
 | `ogl` size (author-reported) | Core 8 KB, Math 6 KB, Extras 15 KB — **total 29 KB minzipped** for the entire package; this build imports a subset | OGL README size table |
 | `ogl` exports used here | `Renderer`, `Program`, `Mesh`, `RenderTarget` (core); `Triangle` (extras, 382 B); `Vec2` (math) — all confirmed present in 1.0.11 | jsDelivr package file listing |
 | `ogl@1.0.11/+esm` | Resolves **HTTP 200**, served as `application/javascript; charset=utf-8` — the module will parse | Verified 2026-09-24 |
+| `ogl@1.0.11/+esm` served size (obligation 1) | **133,629 B raw (130.5 KB) / 39,284 B gzip (38.4 KB)** — the full-package rollup of `src/index.js`, including the loaders this build never calls | Measured 2026-09-24 (see Revision 4) |
+| `ogl` source graph, for comparison | `src/index.js` closure = 348,106 B raw (340 KB) / 89.4 KB gzip across **64** files. A subset import of the six modules used here = 148,175 B raw / **33.5 KB gzip across 21 files** | Measured 2026-09-24 |
+| `js/fluid.js` MIME on GitHub Pages (obligation 3) | **Not yet verified** — no deploy has run since the module was added. A `text/plain` response fails the module and the page keeps the blob wash; check the Network tab on the next publish | Outstanding |
 | `three` latest | 0.186.1 (rejected — see §2) | jsDelivr package API |
 | Boot overlay | opaque, `display: none` unless `html.boot`, set pre-paint, ~4–5s, skippable from 0.15s | markup `index.html` 52–63, `js/main.js` boot section |
 | Inline pre-paint script | sets `data-theme` and (unless reduced motion) `html.boot`; the reduced-motion check is line 28 | `index.html` 22–33 |
@@ -699,7 +725,7 @@ The old principle — *"animation must stay inside a strict performance budget (
 5. **Fixed pass count per frame.** No pass may be added conditionally at runtime. The §6.6 energy reduction runs only on 0.2 Hz sample frames, never every frame.
 6. **Frame-time watchdog with a documented ladder** (§6.10): 22 ms budget over a 90-frame window post-lift (first 10–20 frames excluded), one-step downgrades, no upgrade-back, combined measurement when both instances are visible, and a defined terminal state.
 7. **`readPixels` is permitted only as a 1×1 `RGBA8` read at ≤ 0.2 Hz, and only on the opt-in path** (§6.6). The default is the CPU-side proxy (zero readback). Any larger or more frequent readback is a spec violation.
-8. **Third-party payload stays pinned and measured.** OGL is pinned to `1.0.11`; its measured raw + gzip size is recorded in this spec's change log once known (§0 obligations). Cap: served gzip MUST NOT exceed ~35 KB without a spec revision. LCP MUST NOT regress vs the blob baseline on the target desktop machine (measure once, record).
+8. **Third-party payload stays pinned and measured.** OGL is pinned to `1.0.11`; its measured served size is **38.4 KB gzip / 130.5 KB raw** (§0, Revision 4). Cap: served gzip MUST NOT exceed **40 KB** without a new spec revision — raised from the provisional ~35 KB when the measurement landed 3.4 KB over it, because the alternatives that fit under 35 KB cost either 21 requests on a 3-second-deadline module or six duplicate copies of the library's class identity (Revision 4 records all four measurements). LCP MUST NOT regress vs the blob baseline on the target desktop machine (measure once, record).
 9. **The old rules still apply to everything non-WebGL:** transforms/opacity only, no animated `filter`, no layout properties, `will-change` only where genuinely transformed — and **never on either fluid canvas**. A canvas repaints its own pixels and is never transformed, so promoting it buys nothing and costs memory. This is the same conclusion the original build spec already reached for the particle canvas; do not regress it.
 10. **The blob fallback must remain cheaper than the sim it replaces.** It is the degraded path; it may not become a second heavy system. Metric: 4 tweens, opacity/transform only, no new layers.
 
@@ -786,19 +812,20 @@ The old principle — *"animation must stay inside a strict performance budget (
 
 **Normative keywords.** MUST = verification gate (ship-blocker); SHOULD = default with a recorded exception in the change log. Present-tense prose in §§1–12 reads as MUST unless marked otherwise.
 
-**Code-complete** means:
+**Code-complete** — status as of Revision 4. Every box below was verified by reading the shipped code, not assumed; the manual checklist underneath has **not** been run yet, because it needs a browser and a deploy.
 
-- [ ] `js/fluid.js` exists as an ES module, imports OGL `1.0.11` from the pinned `+esm` URL, exposes the §6.14 `window.Fluid` IDL (`init`, `stir`, `tint`, `setTheme`, `freeze`, `destroy`, `status`), and dispatches `fluid:ready`.
-- [ ] `index.html` gains exactly one `<script type="module" src="js/fluid.js">`, **placed after `main.js`** (last deferred script in document order). No other head change, other than adding `.fluid-scrim` to the existing `<noscript>` hide rule.
-- [ ] Neither canvas appears in `index.html` markup — both are created and appended by `fluid.js`, as is the `.fluid-scrim` div (sibling of `.ambient`).
-- [ ] The theme-wipe duration/ease live in `window.THEME_WIPE` used by both the wipe and the fluid crossfade, and the wipe is painted from the outgoing theme's `--bg`.
-- [ ] `css/style.css` gains the §5.4 tokens (including `--media-*-deep` and provisional `--muted-on-fluid`), the `.fluid-canvas` / `.fluid-echo` / `.fluid-scrim` rules, the forced-colors hide rule, and the obsidian signal band (token scoping, not rewritten rules). The `.blob` block stays as the fallback, and its four per-blob tweens are paused — never killed — while the sim is live.
-- [ ] `js/main.js` integrates through the readiness contract (§3: named handler, both-arm teardown, `fluidCommitted` guard, post-reveal 3s deadline, `heroFluidStarted` guard), drives the hero instance from `heroReveal()`, and wires the three couplings in §6.4. `initAmbient()` no longer starts the blob tweens on the primary path, the `#cursor-glow` node is removed from markup/CSS/wiring, and particle drift is no longer seeded.
-- [ ] The particle canvas no longer runs `drift`; `hyperdrive` and `matrix` cold-start their own dot state and still work.
-- [ ] `PRODUCT.md`, `DESIGN.md` and `gsap-animated-profile-spec.md` updated per §10.
-- [ ] No new UI color token. No chromatic text, border, badge or fill anywhere.
+- [x] `js/fluid.js` exists as an ES module, imports OGL `1.0.11` from the pinned `+esm` URL, exposes the §6.14 `window.Fluid` IDL (`init`, `stir`, `tint`, `setTheme`, `freeze`, `destroy`, `status`), and dispatches `fluid:ready`.
+- [x] `index.html` gains exactly one `<script type="module" src="js/fluid.js">`, **placed after `main.js`** (last deferred script in document order). No other head change, other than adding `.fluid-scrim` to the existing `<noscript>` hide rule.
+- [x] Neither canvas appears in `index.html` markup — both are created and appended by `fluid.js`, as is the `.fluid-scrim` div (sibling of `.ambient`).
+- [x] The theme-wipe duration/ease live in `window.THEME_WIPE` used by both the wipe and the fluid crossfade, and the wipe is painted from the outgoing theme's `--bg`.
+- [x] `css/style.css` gains the §5.4 tokens (including `--media-*-deep` and provisional `--muted-on-fluid`), the `.fluid-canvas` / `.fluid-echo` / `.fluid-scrim` rules, the forced-colors hide rule, and the obsidian signal band (token scoping, not rewritten rules). The `.blob` block stays as the fallback, and its four per-blob tweens are paused — never killed — while the sim is live.
+- [x] `js/main.js` integrates through the readiness contract (§3: named handler, both-arm teardown, `fluidCommitted` guard, post-reveal 3s deadline, `heroFluidStarted` guard), drives the hero instance from `heroReveal()`, and wires the three couplings in §6.4. `initAmbient()` no longer starts the blob tweens on the primary path, the `#cursor-glow` node is removed from markup/CSS/wiring, and particle drift is no longer seeded.
+- [x] The particle canvas no longer runs `drift`; `hyperdrive` and `matrix` cold-start their own dot state and still work.
+- [x] `PRODUCT.md`, `DESIGN.md` and `gsap-animated-profile-spec.md` updated per §10.
+- [x] No new UI color token. No chromatic text, border, badge or fill anywhere.
+- [x] *(Added during implementation — §6.15's locked decision made concrete.)* The nav's difference blend is scoped by `html.nav-blend` to the hero's scroll range, with `html.nav-on-dark` giving the always-obsidian signal band white type in *both* themes. Without that second state the light theme would put black nav text on the black band, which §6.15 does not cover.
 
-**Manual checklist** (the accepted verification standard — eyeball each, in a real browser, on `git.barren.eu.org` after deploy):
+**Manual checklist** (the accepted verification standard — eyeball each, in a real browser, on `git.barren.eu.org` after deploy). **Nothing here has been run yet.**
 
 - [ ] **Hero, light theme:** liquid is visibly moving and reads as molten silk, not blobs. Four anchors all findable, blue unmistakable. Hero name and tagline clearly legible at the brightest moment of a full loop.
 - [ ] **Hero, dark theme:** the deep palette reads nocturnal and cooler; amber is largely absent; white type legible throughout.
@@ -808,7 +835,7 @@ The old principle — *"animation must stay inside a strict performance budget (
 - [ ] **Scroll:** fast scrolling visibly stirs, stopping lets it settle. Scrolling past the hero stops the hero instance (verify in DevTools that frame work drops).
 - [ ] **Signal band:** obsidian in both themes; the echo reads as a quiet recurrence, never a competing effect; the cards still sit on identical box dimensions (zero CLS).
 - [ ] **Theme toggle:** the fluid's palette changes in sync with the wipe, with no visible seam and no reset of the flow.
-- [ ] **Nav:** wordmark and links legible over each of the four anchors in the hero range; nav resolves to `var(--text)` past the hero (locked §6.15 decision). Focus ring verified on rendered pixels too.
+- [ ] **Nav:** wordmark and links legible over each of the four anchors in the hero range; nav resolves to `var(--text)` past the hero (locked §6.15 decision) and to white over the obsidian band in the light theme. Focus ring verified on rendered pixels too.
 - [ ] **Ghost pill hover:** hovering a CTA produces one soft warm bloom beneath it, not a splat.
 - [ ] **Terminal:** typing ripples the fluid.
 - [ ] **Konami:** starfield plus a violent stir that decays back to calm. **`matrix`:** stir plus a green tint that fully releases afterwards. No effect exceeds 3 flashes/sec.
@@ -828,7 +855,7 @@ The old principle — *"animation must stay inside a strict performance budget (
 - [ ] **Low-tier terminal state:** cross-fade to blobs, context actually released, one-way for the session.
 - [ ] **Keyboard-only:** tab order and focus visibility unchanged; no new focusable node.
 - [ ] **Wipe colour:** toggling theme shows a wipe painted in the *outgoing* theme's background colour — no navy-vs-black colour cast crossing the page.
-- [ ] **Payload record:** OGL's measured raw + gzip size, and the measured average frame time at each tier the dev machine can reach (§0 obligations 1 and 4), are recorded in this spec's change log.
+- [ ] **Payload record:** OGL's measured size is recorded (Revision 4: 38.4 KB gzip / 130.5 KB raw); the measured average frame time at each tier the dev machine can reach (§0 obligation 4) is **still owed**, as is obligation 3 (GitHub Pages serves `js/fluid.js` as `application/javascript`) and obligation 5 (contrast over rendered pixels).
 
 ---
 
