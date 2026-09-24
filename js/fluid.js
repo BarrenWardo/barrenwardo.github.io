@@ -428,18 +428,24 @@ function paletteSlots(p) {
 
 /* ------------------------------------------------------------------ targets */
 
-function createDoubleFBO(gl, w, h, fmt) {
-  const make = () => new RenderTarget(gl, {
+function targetOpts(gl, w, h, fmt) {
+  const o = {
     width: w, height: h,
     minFilter: gl.LINEAR, magFilter: gl.LINEAR,
     wrapS: gl.CLAMP_TO_EDGE, wrapT: gl.CLAMP_TO_EDGE,
-    internalFormat: fmt.internalFormat,
     format: fmt.format,
     type: fmt.type,
     depth: false,
     stencil: false
-  });
-  return { read: make(), write: make(), swap() { const t = this.read; this.read = this.write; this.write = t; } };
+  };
+  if (fmt.internalFormat) { o.internalFormat = fmt.internalFormat; }
+  return o;
+}
+function createDoubleFBO(gl, w, h, fmt) {
+  const make = () => new RenderTarget(gl, targetOpts(gl, w, h, fmt));
+  const d = { read: make(), write: make() };
+  d.swap = () => { const t = d.read; d.read = d.write; d.write = t; };
+  return d;
 }
 
 /* Detect renderable float support (spec §6.1). Never assumed, always detected
@@ -473,6 +479,11 @@ class FluidInstance {
 
     const tierName = TIER_ORDER.includes(this.opts.quality) ? this.opts.quality : this.pickInitialTier();
     this.setTier(tierName, true);
+    if (this.kind === "echo") {
+      this.tier = { sim: 64, density: 128, iterations: 8, dpr: 1, emitterRate: 0.5 };
+      this.tierName = "echo";
+      this.probe.done = true;   // exempt from the tier ladder (§6.10)
+    }
 
     /* Canvas. Created here, never in markup (spec §6.2/§6.12) — so a failed
      * module can never leave an empty hero, and the no-JS path is untouched. */
@@ -515,6 +526,7 @@ class FluidInstance {
     this.running = false;
     this.status = "pending";
     this.bloom = this.kind === "echo" || this.reduced ? 1 : 0;
+    this.bloomT = 0;
     this.mix = 1;
     this.mixFrom = null;
     this.mixTo = null;
@@ -526,11 +538,11 @@ class FluidInstance {
     this.energyClock = 0;
     this.lowSamples = 0;
     this.emitters = this.kind === "echo"
-      ? [{ x: 0.3, y: 0.45, tx: 0.7, ty: 0.5, next: rand(3, 8), leg: 6, dir: 1 }]
+      ? [{ x: 0.3, y: 0.45, tx: 0.7, ty: 0.5, next: rand(6, 12), leg: 6, dir: 1 }]
       : [{ x: 0.25, y: 0.35, tx: 0.7, ty: 0.4, next: rand(3, 6), leg: 7, dir: 1 },
          { x: 0.75, y: 0.6, tx: 0.3, ty: 0.7, next: rand(4, 7), leg: 9, dir: 1 }];
     this.pointer = null;
-    this.pointerActive = 0;
+    this.leaveDecay = null;
     this.probe = { frames: 0, total: 0, values: [], done: false, started: false };
     this.frameCount = 0;
     this.lastFrameAt = 0;
@@ -601,6 +613,24 @@ class FluidInstance {
       : { a: paletteSlots(readMediaPalette(false)), b: paletteSlots(readMediaPalette(false)) };
   }
 
+  /* Release the GL textures of the previous allocation, if any — reallocating
+   * without this leaks a full target set per tier step and per resize (§6.10). */
+  disposeTargets() {
+    if (!this.gl || !this.velocity) { return; }
+    const gl = this.gl;
+    const kill = (t) => {
+      if (!t) { return; }
+      try {
+        if (t.texture && t.texture.texture) { gl.deleteTexture(t.texture.texture); }
+        else if (t.texture) { gl.deleteTexture(t.texture); }
+      } catch (e) { /* already gone */ }
+    };
+    for (const d of [this.velocity, this.density, this.pressure]) {
+      if (!d) { continue; }
+      kill(d.read); kill(d.write);
+    }
+    kill(this.divergence); kill(this.curl);
+  }
   /* Allocate / reallocate every simulation target for the current size. */
   resize(initial) {
     const gl = this.gl;
@@ -628,21 +658,12 @@ class FluidInstance {
     this.denTexel = new Vec2(1 / den.w, 1 / den.h);
     this.velTexel = new Vec2(1 / sim.w, 1 / sim.h);
 
+    if (!initial) { this.disposeTargets(); }
     this.velocity = createDoubleFBO(gl, sim.w, sim.h, this.simFmt);
     this.density = createDoubleFBO(gl, den.w, den.h, this.densityFmt);
     this.pressure = createDoubleFBO(gl, sim.w, sim.h, this.simFmt);
-    this.divergence = new RenderTarget(gl, {
-      width: sim.w, height: sim.h, minFilter: gl.LINEAR, magFilter: gl.LINEAR,
-      wrapS: gl.CLAMP_TO_EDGE, wrapT: gl.CLAMP_TO_EDGE,
-      internalFormat: this.simFmt.internalFormat, format: this.simFmt.format, type: this.simFmt.type,
-      depth: false, stencil: false
-    });
-    this.curl = new RenderTarget(gl, {
-      width: sim.w, height: sim.h, minFilter: gl.LINEAR, magFilter: gl.LINEAR,
-      wrapS: gl.CLAMP_TO_EDGE, wrapT: gl.CLAMP_TO_EDGE,
-      internalFormat: this.simFmt.internalFormat, format: this.simFmt.format, type: this.simFmt.type,
-      depth: false, stencil: false
-    });
+    this.divergence = new RenderTarget(gl, targetOpts(gl, sim.w, sim.h, this.simFmt));
+    this.curl = new RenderTarget(gl, targetOpts(gl, sim.w, sim.h, this.simFmt));
 
     if (!initial) { this.needsReseed = true; }
   }
@@ -688,7 +709,13 @@ class FluidInstance {
    * frame with the §6.1 drop order (reveal → scroll → pointer → autonomous). */
   queueSplat(s) {
     this.queue.push(s);
-    if (this.queue.length > SPLAT_BATCH_CAP * 2) { this.queue.length = SPLAT_BATCH_CAP * 2; }
+    if (this.queue.length > SPLAT_BATCH_CAP * 2) {
+      // Truncate by priority, not recency: an old autonomous emitter outranks
+      // a newer scroll impulse when the frame is oversubscribed (§6.1).
+      const priority = { autonomous: 3, pointer: 2, stir: 2, scroll: 1, reveal: 0 };
+      this.queue.sort((a, b) => (priority[b.kind] || 0) - (priority[a.kind] || 0));
+      this.queue.length = SPLAT_BATCH_CAP * 2;
+    }
   }
 
   splat(x, y, dx, dy, radius, opts) {
@@ -752,7 +779,8 @@ class FluidInstance {
     this.divergenceProg.uniforms.uVelocity.value = this.velocity.read.texture;
     this.draw(this.divergenceProg, this.divergence);
 
-    // 6. Pressure solve (Jacobi)
+    // 6. Pressure solve (Jacobi). The 0.8 decay sets the iteration's starting
+    // guess — part of this step, not an extra pass (fixed pass count, §6.1).
     this.clearProg.uniforms.uTexture.value = this.pressure.read.texture;
     this.clearProg.uniforms.uValue.value = 0.8;
     this.draw(this.clearProg, this.pressure.write);
@@ -789,12 +817,15 @@ class FluidInstance {
   /* 10. Injections — one stage, priority-ordered, capped. */
   flushInjections() {
     if (!this.queue.length) { return; }
-    const priority = { autonomous: 3, pointer: 2, scroll: 1, reveal: 0 };
-    const batch = this.queue
+    const priority = { autonomous: 3, pointer: 2, stir: 2, scroll: 1, reveal: 0 };
+    const sorted = this.queue
       .slice()
-      .sort((a, b) => (priority[b.kind] || 0) - (priority[a.kind] || 0))
-      .slice(0, SPLAT_BATCH_CAP);
+      .sort((a, b) => (priority[b.kind] || 0) - (priority[a.kind] || 0));
+    const batch = sorted.slice(0, SPLAT_BATCH_CAP);
+    // Autonomous emitters are never dropped, at most deferred one frame (§6.1).
+    const carry = sorted.slice(SPLAT_BATCH_CAP).find((x) => x.kind === "autonomous");
     this.queue.length = 0;
+    if (carry) { this.queue.push(carry); }
     for (const s of batch) { this.splat(s.x, s.y, s.dx, s.dy, s.radius, s); }
   }
 
@@ -828,7 +859,11 @@ class FluidInstance {
     this.energyClock += dt * 1000;
     if (this.energyClock >= ENERGY_SAMPLE_MS) {
       this.energyClock = 0;
-      this.energy = this.energy * 0.5 + this.energyAccum * 0.5;
+      // Spec §6.6: energy*pow(0.5, dt/10) + |injection|, dt = 5s → 0.707.
+      // The accumulator is grid units (one quiet splat ≈ 2–3), so it is
+      // normalized by ~40 before comparison with RESEED_FLOOR (0–1 units):
+      // the floor trips only when the field has been near-still for ~10s.
+      this.energy = this.energy * 0.707 + (this.energyAccum / 40);
       this.energyAccum = 0;
       if (this.energy < RESEED_FLOOR) {
         this.lowSamples++;
@@ -871,27 +906,43 @@ class FluidInstance {
     if (x < 0 || x > 1 || y < 0 || y > 1) { return; }
     const prev = this.pointer;
     this.pointer = { x, y, nx: prev ? x : x, ny: prev ? y : y, dx: prev ? x - prev.x : 0, dy: prev ? y - prev.y : 0 };
-    this.pointerActive = 1;
+    this.leaveDecay = null;   // fresh motion cancels the leave decay
   }
 
-  flushPointer() {
-    if (!this.pointer || this.reduced || this.kind !== "hero") { return; }
-    const p = this.pointer;
-    if (Math.abs(p.dx) > 0.0001 || Math.abs(p.dy) > 0.0001) {
+  // On pointerleave the field decays back to autonomous over ~2s (§6.4): the
+  // last motion delta is replayed with exponential decay, not cut dead.
+  onLeave(now) {
+    if (this.pointer && (Math.abs(this.pointer.dx) > 0.0001 || Math.abs(this.pointer.dy) > 0.0001)) {
+      this.leaveDecay = { x: this.pointer.x, y: this.pointer.y, dx: this.pointer.dx, dy: this.pointer.dy, t0: now };
+    }
+    this.pointer = null;
+  }
+  flushPointer(now) {
+    if (this.reduced || this.kind !== "hero") { return; }
+    let spot = this.pointer;
+    if (!spot && this.leaveDecay) {
+      const age = now - this.leaveDecay.t0;
+      if (age > 2000) { this.leaveDecay = null; }
+      else {
+        const k = Math.exp(-age / 700);
+        spot = { x: this.leaveDecay.x, y: this.leaveDecay.y, dx: this.leaveDecay.dx * k, dy: this.leaveDecay.dy * k, decay: true };
+      }
+    }
+    if (!spot) { return; }
+    if (Math.abs(spot.dx) > 0.0001 || Math.abs(spot.dy) > 0.0001) {
       const simLong = this.tier.sim;
-      const dxPx = p.dx * (this.canvas.clientWidth || 1);
-      const dyPx = p.dy * (this.canvas.clientHeight || 1);
+      const dxPx = spot.dx * (this.canvas.clientWidth || 1);
+      const dyPx = spot.dy * (this.canvas.clientHeight || 1);
       const scale = FORCE_SCALE / simLong;
       this.queueSplat({
-        x: p.x, y: p.y,
+        x: spot.x, y: spot.y,
         dx: clamp(dxPx * scale, -FORCE_CLAMP, FORCE_CLAMP),
         dy: clamp(dyPx * scale, -FORCE_CLAMP, FORCE_CLAMP),
         radius: rand(0.15, 0.25),
         phase: Math.random(), energy: 0.85, kind: "pointer"
       });
     }
-    this.pointer.dx = 0;
-    this.pointer.dy = 0;
+    if (this.pointer) { this.pointer.dx = 0; this.pointer.dy = 0; }
   }
 
   /* 11. Display */
@@ -916,10 +967,9 @@ class FluidInstance {
     this.draw(this.displayProg, null);
   }
 
-  /* Per-frame entry point, called by the shared driver. `ms` is the wall-clock
-   * interval since this instance's previous stepped frame — the watchdog's
-   * "frame time" (§6.10), not the cost of our own passes. */
-  frame(now, ms) {
+  /* Per-frame entry point, called by the shared driver, which times the actual
+   * step+draw work and feeds it to probeFrame itself (§6.10). */
+  frame(now) {
     if (this.status !== "ready" || this.reduced) { return; }
     const dt = clamp(this.lastT ? (now - this.lastT) / 1000 : 1 / 60, 0.0001, DT_MAX);
     this.lastT = now;
@@ -927,18 +977,18 @@ class FluidInstance {
     /* uBloom starts only once a frame has actually been submitted (Risk 2), so
      * the ignite never competes with shader compilation. */
     if (this.frameCount >= 2 && this.bloom < 1) {
-      this.bloom = Math.min(1, this.bloom + dt / 1.5);
+      // Signature ease cubic-bezier(0.19, 1, 0.22, 1), expo-out-like (spec §6.2).
+      this.bloomT = Math.min(1, this.bloomT + dt / 1.5);
+      this.bloom = this.bloomT >= 1 ? 1 : 1 - Math.pow(2, -10 * this.bloomT);
     }
 
-    this.flushPointer();
+    this.flushPointer(now);
     this.tickEmitters(dt, now);
     this.stepSim(dt);
     this.flushInjections();
     this.advanceTintAndStir(dt, now);
     this.drawDisplay();
     this.frameCount++;
-    this.probeFrame(ms);
-    this.lastFrameAt = now;
   }
 
   advanceTintAndStir(dt, now) {
@@ -961,13 +1011,13 @@ class FluidInstance {
   /* Frame-time watchdog (spec §6.10). */
   probeFrame(ms) {
     if (this.probe.done) { return; }
-    const coVisible = this.opts.coVisible ? this.opts.coVisible() : false;
     if (!this.probe.started) {
       this.probeSkip = PROBE_SKIP;
       this.probe.started = true;
       return;
     }
     if (this.probeSkip > 0) { this.probeSkip--; return; }
+    if (!(ms > 0)) { return; }   // first frame after a resume has no interval
     this.probe.values.push(ms);
     this.probe.total += ms;
     this.probe.frames++;
@@ -975,8 +1025,7 @@ class FluidInstance {
       const avg = this.probe.total / this.probe.frames;
       const sorted = this.probe.values.slice().sort((x, y) => x - y);
       const median = sorted[Math.floor(sorted.length / 2)];
-      const budget = coVisible ? FRAME_BUDGET_MS : FRAME_BUDGET_MS;
-      if (avg > budget && median > budget) { this.downgrade(); }
+      if (avg > FRAME_BUDGET_MS && median > FRAME_BUDGET_MS) { this.downgrade(); }
       this.probe.done = true;
     }
   }
@@ -990,6 +1039,7 @@ class FluidInstance {
     }
     const next = TIER_ORDER[this.tierIndex + 1];
     this.setTier(next, false);
+    this.disposeTargets();
     this.resize(true);
     this.seedField(777);
     this.probeDone = true;
@@ -1013,6 +1063,11 @@ class FluidInstance {
       canvas.style.transition = "opacity 600ms cubic-bezier(0.19, 1, 0.22, 1)";
       canvas.style.opacity = "0";
     }
+    try {
+      const lose = this.gl && this.gl.getExtension("WEBGL_lose_context");
+      if (lose) { lose.loseContext(); }
+    } catch (e) { /* context already gone */ }
+    this.velocity = this.density = this.pressure = this.divergence = this.curl = null;
     window.dispatchEvent(new CustomEvent("fluid:fallback", { detail: { instance: this.name, reason: reason } }));
   }
 
@@ -1037,23 +1092,38 @@ class FluidInstance {
 
 const instances = {};
 let driverStarted = false;
+let driverGen = 0;   // bumped by destroy-all: stale loops exit instead of leaking
+let lastFailure = null; // construction-failure reason when no instance survives
 
 /* One rAF for both sims; never two loops. rAF already stops while the tab is
  * hidden — visibility is handled by flags, not by re-scheduling inside a hidden
- * branch (spec §4). */
-function driver(now) {
+ * branch (spec §4). The generation check stops the loops after a destroy-all
+ * instead of leaving them self-rescheduling forever. */
+function driver(now, gen) {
+  if (gen !== driverGen) { return; }
   if (!document.hidden) {
-    for (const name in instances) {
-      const inst = instances[name];
-      if (!inst || !inst.visible || !inst.running) { continue; }
-      /* Wall-clock interval since *this instance's* last stepped frame. When both
-       * instances are visible they share the interval, which is exactly the
-       * combined measurement §6.10 asks for. */
-      const ms = inst.lastFrameAt ? now - inst.lastFrameAt : 0;
-      inst.frame(now, ms);
+    const h = instances.hero;
+    const e = instances.echo;
+    const hLive = !!(h && h.visible && h.running && h.status === "ready");
+    const eLive = !!(e && e.visible && e.running && e.status === "ready");
+    if (hLive && eLive) {
+      const t0 = performance.now();
+      h.frame(now);
+      e.frame(now);
+      const cost = performance.now() - t0;
+      h.probeFrame(cost);
+      e.probeFrame(cost);
+    } else {
+      const inst = hLive ? h : (eLive ? e : null);
+      if (inst) {
+        const t0 = performance.now();
+        inst.frame(now);
+        inst.probeFrame(performance.now() - t0);
+      }
     }
+    tickCrossfade(now);
   }
-  requestAnimationFrame(driver);
+  requestAnimationFrame((t) => driver(t, gen));
 }
 
 /* Mini-reseed after a reallocation: one splat is not a composed field (§4/§6.6). */
@@ -1122,9 +1192,10 @@ function observeResize(inst) {
   ro.observe(inst.container);
 }
 
+let allDestroyed = false;
 const status = () => {
   const live = Object.keys(instances).filter((k) => instances[k]);
-  if (!live.length) { return "pending"; }
+  if (!live.length) { return allDestroyed ? "destroyed" : (lastFailure || "pending"); }
   if (live.some((k) => instances[k].status === "ready")) { return "ready"; }
   if (live.some((k) => instances[k].status === "lost")) { return "lost"; }
   if (live.some((k) => instances[k].status === "destroyed")) { return "destroyed"; }
@@ -1142,6 +1213,7 @@ function containerFor(instance) {
 function init(instance, opts) {
   const name = instance === "echo" ? "echo" : "hero";
   if (instances[name]) { return instances[name]; }   // idempotent
+  allDestroyed = false;
 
   const container = containerFor(name);
   if (!container) { return null; }
@@ -1165,7 +1237,7 @@ function init(instance, opts) {
       // listener must be on window (spec §6.4).
       if (isFinePointer() && !isReduced()) {
         window.addEventListener("pointermove", (e) => inst.onPointer(e), { passive: true });
-        window.addEventListener("pointerleave", () => { inst.pointerActive = 0; }, { passive: true });
+        window.addEventListener("pointerleave", () => { inst.onLeave(performance.now()); }, { passive: true });
       }
     }
     observeResize(inst);
@@ -1173,12 +1245,13 @@ function init(instance, opts) {
   } catch (err) {
     /* No canvas was created, so the scrim ensureScrim() just added would sit
        alone over the blob wash. Removed synchronously, before paint. */
+    lastFailure = "unsupported";
     if (name === "hero") { removeScrim(); }
     window.dispatchEvent(new CustomEvent("fluid:fallback", { detail: { instance: name, reason: "unsupported" } }));
     return null;
   }
 
-  if (!driverStarted) { driverStarted = true; requestAnimationFrame(driver); }
+  if (!driverStarted) { driverStarted = true; requestAnimationFrame((t) => driver(t, driverGen)); }
   return instances[name];
 }
 
@@ -1191,12 +1264,8 @@ function inject(s) {
 function setVisible(instance, visible) {
   const inst = instances[instance === "echo" ? "echo" : "hero"];
   if (!inst) { return; }
-  const wasVisible = inst.visible;
   inst.visible = !!visible;
   inst.running = !!visible && inst.status === "ready" && !inst.reduced;
-  if (inst.running && !wasVisible) {
-    inst.probe = { frames: 0, total: 0, values: [], done: false, started: false };
-  }
   /* A resize while paused reallocated but deferred its reseed to resume (§4). */
   if (inst.running && inst.needsReseed) {
     inst.needsReseed = false;
@@ -1207,9 +1276,9 @@ function setVisible(instance, visible) {
 
 function stir(o) {
   const opts = o || {};
-  const intensity = clamp(opts.intensity != null ? opts.intensity : 1, 0, 2);
-  const durationMs = opts.durationMs || 6000;
-  const radius = opts.radius || 0.25;
+  const intensity = clamp(opts.intensity != null ? opts.intensity : 1, 0, 1);
+  const durationMs = opts.durationMs != null ? opts.durationMs : 6000;
+  const radius = opts.radius != null ? opts.radius : 0.25;
   const inst = instances.hero;
   if (!inst || inst.status !== "ready" || inst.reduced) { return; }
   inst.stir = { until: performance.now() + durationMs, intensity };
@@ -1217,7 +1286,7 @@ function stir(o) {
     inst.queueSplat({
       x: rand(0.15, 0.85), y: rand(0.15, 0.85),
       dx: rand(-FORCE_CLAMP, FORCE_CLAMP), dy: rand(-FORCE_CLAMP, FORCE_CLAMP),
-      radius, phase: Math.random(), energy: 1.0, kind: "pointer"
+      radius, phase: Math.random(), energy: 1.0, kind: "stir"
     });
   }
 }
@@ -1226,9 +1295,10 @@ function tint(o) {
   const opts = o || {};
   const inst = instances.hero;
   if (!inst || inst.status !== "ready" || inst.reduced) { return; }
-  if (opts.color) { inst.tint.color = opts.color; }
-  inst.tint.rampMs = opts.rampMs || 500;
-  inst.tint.holdMs = opts.holdMs || 4500;
+  inst.tint.color = opts.color || [0.2, 1.0, 0.35];   // matrix green default
+  inst.tint.rampMs = opts.rampMs != null ? opts.rampMs : 500;
+  inst.tint.holdMs = opts.holdMs != null ? opts.holdMs : 4500;
+  inst.tint.amount = 0;   // retrigger always ramps 0→1, never resumes mid-tint
   inst.tint.phase = "ramp";
 }
 
@@ -1241,7 +1311,7 @@ function setTheme(to) {
   if (!inst || inst.status !== "ready") { return; }
   const incoming = paletteSlots(readMediaPalette(false));
   const current = inst.paletteNow;
-  const eased = smoothstep(inst.mix);
+  const eased = easeInOutCubic(inst.mix);
   const from = current.a.map((c, i) => [
     c[0] + (current.b[i][0] - c[0]) * eased,
     c[1] + (current.b[i][1] - c[1]) * eased,
@@ -1249,7 +1319,9 @@ function setTheme(to) {
   ]);
   inst.paletteNow = { a: from, b: incoming };
   inst.mix = 0;
-  inst.crossfadeEnd = performance.now() + (inst.wipeMs || 700);
+  inst.crossfadeEnd = performance.now() + ((window.THEME_WIPE && window.THEME_WIPE.duration)
+    ? window.THEME_WIPE.duration * 1000
+    : (inst.wipeMs || 700));
   inst.reduced = isReduced();
   if (inst.reduced) {
     inst.paletteNow = { a: incoming, b: incoming };
@@ -1259,26 +1331,28 @@ function setTheme(to) {
   void to;
 }
 
-function smoothstep(t) {
-  const x = clamp(t, 0, 1);
-  return x * x * (3 - 2 * x);
-}
-
 /* The crossfade clock lives in the driver so it stays independent of the sim's
- * dt clamp, and stops exactly when the wipe does. */
+ * dt clamp, and stops exactly when the wipe does. Progression is power3.inOut —
+ * the same curve as the wipe — via the shared easeInOutCubic below. */
+function easeInOutCubic(t) {
+  const x = clamp(t, 0, 1);
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+}
 function tickCrossfade(now) {
   const inst = instances.hero;
   if (!inst || !inst.crossfadeEnd) { return; }
-  const total = inst.wipeMs || 700;
+  const total = (window.THEME_WIPE && window.THEME_WIPE.duration)
+    ? window.THEME_WIPE.duration * 1000
+    : (inst.wipeMs || 700);
   const remaining = inst.crossfadeEnd - now;
   const m = clamp(1 - remaining / total, 0, 1);
-  inst.mix = m;
+  inst.mix = easeInOutCubic(m);
   if (remaining <= 0) {
     inst.mix = 1;
     inst.paletteNow = { a: inst.paletteNow.b, b: inst.paletteNow.b };
     inst.crossfadeEnd = 0;
   }
-  if (inst.visible && !inst.reduced) { inst.redrawOnly(); }
+  if (!inst.running && inst.visible && !inst.reduced) { inst.redrawOnly(); }
 }
 
 function freeze() {
@@ -1301,11 +1375,13 @@ function destroy(instance) {
   for (const name in instances) {
     if (instances[name]) { instances[name].destroy(); delete instances[name]; }
   }
+  allDestroyed = true;
+  driverGen++;
   driverStarted = false;
 }
 
-/* Injected into the driver on every tick, whether or not the sims are stepping. */
-const crossfadeDriver = (now) => { tickCrossfade(now); requestAnimationFrame(crossfadeDriver); };
+/* Runs inside the single shared driver on every tick, whether or not the sims
+ * are stepping — never a second loop of its own (spec §4, §8 rule 2). */
 
 const Fluid = {
   get status() { return status(); },
@@ -1353,8 +1429,6 @@ document.addEventListener("visibilitychange", () => {
     if (inst && inst.status === "ready" && inst.reduced) { inst.redrawOnly(); }
   }
 });
-
-requestAnimationFrame(crossfadeDriver);
 
 /* main.js may already be waiting for this (it runs first — spec §3). */
 window.dispatchEvent(new Event("fluid:ready"));
