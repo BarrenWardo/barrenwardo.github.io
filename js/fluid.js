@@ -17,7 +17,10 @@
  *   Fluid.palette()                   current four anchors, for diagnostics
  *
  * Events: "fluid:ready", "fluid:first-frame" (detail.instance), "fluid:fallback" (detail.instance).
- * main.js owns every DOM consequence — the blob layer, the scrim node, the couplings.
+ * main.js owns the blob layer and the couplings. The scrim is created HERE (it is
+ * a property of the canvas) and removed on every path where the hero canvas does
+ * not survive, including construction failure, context loss, terminal downgrade
+ * and destroy — see removeScrim().
  *
  * Deliberately does NOT depend on window.gsap: it must initialise on its own terms,
  * and must still work when GSAP is blocked but OGL loaded fine (spec §6.4).
@@ -326,6 +329,9 @@ const FORCE_CLAMP = 10;               // grid units per frame
 const SPLAT_RADIUS = 0.20;            // aspect-corrected UV; floor 0.005
 const DT_MAX = 1 / 30;
 const SPLAT_BATCH_CAP = 8;
+/* Shared with the CSS opacity transition on both canvases (0.6s) and with main.js's
+ * blob handoff, so the scrim leaves exactly when the cross-fade lands. */
+const CROSSFADE_MS = 600;
 const RESEED_FLOOR = 0.02;            // mean energy, provisional
 const ENERGY_SAMPLE_MS = 5000;
 const PROBE_WINDOW = 90;
@@ -996,6 +1002,12 @@ class FluidInstance {
     this.running = false;
     this.visible = false;
     this.probe.done = true;
+    /* The scrim exists to make a live canvas legible, so it leaves with the
+       canvas it was built for: over the blob wash a raw scrim would veil a media
+       layer that was never designed to sit under one (light theme core is 72%
+       white). Deferred to the END of the 600ms cross-fade so the veil lifts as
+       the blob wash settles rather than flashing the un-veiled fluid first. */
+    if (this.kind === "hero") { setTimeout(removeScrim, CROSSFADE_MS + 20); }
     const canvas = this.canvas;
     if (canvas && canvas.style) {
       canvas.style.transition = "opacity 600ms cubic-bezier(0.19, 1, 0.22, 1)";
@@ -1009,6 +1021,7 @@ class FluidInstance {
     this.status = "destroyed";
     this.running = false;
     this.visible = false;
+    if (this.kind === "hero") { removeScrim(); }
     try {
       const lose = this.gl && this.gl.getExtension("WEBGL_lose_context");
       if (lose) { lose.loseContext(); }
@@ -1057,6 +1070,16 @@ function reseedInstance(inst, count) {
 
 /* The scrim is created by JS, never markup, and sits as a sibling of `.ambient`
  * so the existing <noscript> rule can hide it (spec §3, §4). */
+/* The scrim belongs to a live hero canvas and leaves with it: it is removed on
+ * construction failure, on context loss, on the tier terminal state, on destroy,
+ * and (below) the moment those paths are known. Over the blob wash a raw scrim
+ * would wash the hero out — the fallback must look like the fallback, not like a
+ * veiled version of it. */
+function removeScrim() {
+  const scrim = document.querySelector(".fluid-scrim");
+  if (scrim && scrim.parentNode) { scrim.parentNode.removeChild(scrim); }
+}
+
 function ensureScrim() {
   if (document.querySelector(".fluid-scrim")) { return; }
   const scrim = document.createElement("div");
@@ -1148,6 +1171,9 @@ function init(instance, opts) {
     observeResize(inst);
     window.dispatchEvent(new CustomEvent("fluid:first-frame", { detail: { instance: name } }));
   } catch (err) {
+    /* No canvas was created, so the scrim ensureScrim() just added would sit
+       alone over the blob wash. Removed synchronously, before paint. */
+    if (name === "hero") { removeScrim(); }
     window.dispatchEvent(new CustomEvent("fluid:fallback", { detail: { instance: name, reason: "unsupported" } }));
     return null;
   }
