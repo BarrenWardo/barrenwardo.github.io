@@ -429,9 +429,10 @@ function paletteSlots(p) {
 /* ------------------------------------------------------------------ targets */
 
 function targetOpts(gl, w, h, fmt) {
+  const filt = fmt.linear === false ? gl.NEAREST : gl.LINEAR;
   const o = {
     width: w, height: h,
-    minFilter: gl.LINEAR, magFilter: gl.LINEAR,
+    minFilter: filt, magFilter: filt,
     wrapS: gl.CLAMP_TO_EDGE, wrapT: gl.CLAMP_TO_EDGE,
     format: fmt.format,
     type: fmt.type,
@@ -462,7 +463,10 @@ function detectFloat(gl) {
   const cbHalf = gl.getExtension("EXT_color_buffer_half_float");
   if (half && cbHalf) {
     // WebGL1 needs the extension's own type constant, not gl.HALF_FLOAT.
-    return { format: gl.RGBA, type: half.HALF_FLOAT_OES, isFloat: true };
+    // Half-float is only LINEAR-filterable with the linear extension; without
+    // it an incomplete texture would render black.
+    const linear = !!gl.getExtension("OES_texture_half_float_linear");
+    return { format: gl.RGBA, type: half.HALF_FLOAT_OES, isFloat: true, linear };
   }
   return { format: gl.RGBA, type: gl.UNSIGNED_BYTE, isFloat: false };
 }
@@ -477,12 +481,15 @@ class FluidInstance {
     this.kind = this.opts.kind || "hero";
     this.fixedPalette = this.opts.fixedPalette || null;
 
+    this.probe = { frames: 0, total: 0, values: [], done: false, started: false };
     const tierName = TIER_ORDER.includes(this.opts.quality) ? this.opts.quality : this.pickInitialTier();
     this.setTier(tierName, true);
     if (this.kind === "echo") {
       this.tier = { sim: 64, density: 128, iterations: 8, dpr: 1, emitterRate: 0.5 };
       this.tierName = "echo";
+      this.tierIndex = TIER_ORDER.length - 1;   // already at the floor: downgrade() can only terminal-fail
       this.probe.done = true;   // exempt from the tier ladder (§6.10)
+      this.probe.started = true;
     }
 
     /* Canvas. Created here, never in markup (spec §6.2/§6.12) — so a failed
@@ -543,7 +550,6 @@ class FluidInstance {
          { x: 0.75, y: 0.6, tx: 0.3, ty: 0.7, next: rand(4, 7), leg: 9, dir: 1 }];
     this.pointer = null;
     this.leaveDecay = null;
-    this.probe = { frames: 0, total: 0, values: [], done: false, started: false };
     this.frameCount = 0;
     this.lastFrameAt = 0;
     this.stirClock = 0;
@@ -556,7 +562,7 @@ class FluidInstance {
 
     this.buildPrograms();
     this.resize(true);
-    this.seedField(this.reduced ? 1 : 1234);
+    this.seedField(1234);   // one image on every path: init, freeze(), resize (Rev 4 non-fix #3)
     if (this.reduced) {
       this.runFrozenFrame();
     } else {
@@ -573,6 +579,7 @@ class FluidInstance {
     const w = window.innerWidth || 1280;
     const cores = navigator.hardwareConcurrency || 4;
     const mem = typeof navigator.deviceMemory === "number" ? navigator.deviceMemory : null;
+    if (w < 500 || cores <= 2 || mem === 1) { return "low"; }
     if (w < 800 || cores <= 2) { return "medium"; }
     if (w < 1400 || cores <= 4 || mem === 1) { return "medium"; }
     return "high";
@@ -582,7 +589,7 @@ class FluidInstance {
     this.tierName = name;
     this.tier = TIERS[name];
     this.tierIndex = TIER_ORDER.indexOf(name);
-    if (!initial) { this.probe = { frames: 0, total: 0, values: [], done: false, started: true }; }
+    if (!initial) { this.probe = { frames: 0, total: 0, values: [], done: false, started: true }; this.probeSkip = PROBE_SKIP; }
   }
 
   /* One Program per pass (spec §6.1), all sharing ONE fullscreen Triangle. Each
@@ -630,6 +637,7 @@ class FluidInstance {
     const kill = (t) => {
       if (!t) { return; }
       try {
+        if (t.buffer) { gl.deleteFramebuffer(t.buffer); }
         if (t.texture && t.texture.texture) { gl.deleteTexture(t.texture.texture); }
         else if (t.texture) { gl.deleteTexture(t.texture); }
       } catch (e) { /* already gone */ }
@@ -676,6 +684,9 @@ class FluidInstance {
     if (this.advectProg && this.advectProg.uniforms.uTexel) { this.advectProg.uniforms.uTexel.value = this.simTexel; }
     if (this.displayProg && this.displayProg.uniforms.uTexel) { this.displayProg.uniforms.uTexel.value = this.denTexel; }
 
+    const gridKey = sim.w + "x" + sim.h + "/" + den.w + "x" + den.h + "@" + this.renderer.dpr;
+    if (!initial && gridKey === this._gridKey) { this.aspect = aspect; return; }
+    this._gridKey = gridKey;
     if (!initial) { this.disposeTargets(); }
     this.velocity = createDoubleFBO(gl, sim.w, sim.h, this.simFmt);
     this.density = createDoubleFBO(gl, den.w, den.h, this.densityFmt);
@@ -724,8 +735,18 @@ class FluidInstance {
   }
 
   /* Queue one injection. Batched into the single injection stage, max 8 per
-   * frame with the §6.1 drop order (reveal → scroll → pointer → autonomous). */
+   * frame with the §6.1 drop order (reveal → scroll → pointer → autonomous).
+   * The extra "stir" kind below ranks with pointer: the easter-egg kick is a
+   * direct interaction, not ambient Reveal traffic. */
   queueSplat(s) {
+    if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y)) { return; }
+    s.x = clamp(s.x, 0, 1); s.y = clamp(s.y, 0, 1);
+    s.dx = clamp(Number.isFinite(s.dx) ? s.dx : 0, -FORCE_CLAMP, FORCE_CLAMP);
+    s.dy = clamp(Number.isFinite(s.dy) ? s.dy : 0, -FORCE_CLAMP, FORCE_CLAMP);
+    s.radius = clamp(Number.isFinite(s.radius) ? s.radius : SPLAT_RADIUS, 0.005, 0.6);
+    s.phase = Number.isFinite(s.phase) ? s.phase : Math.random();
+    s.energy = clamp(Number.isFinite(s.energy) ? s.energy : 0.8, 0, 2);
+    if (typeof s.kind !== "string") { s.kind = "reveal"; }
     this.queue.push(s);
     if (this.queue.length > SPLAT_BATCH_CAP * 2) {
       // Truncate by priority, not recency: an old autonomous emitter outranks
@@ -841,9 +862,10 @@ class FluidInstance {
       .sort((a, b) => (priority[b.kind] || 0) - (priority[a.kind] || 0));
     const batch = sorted.slice(0, SPLAT_BATCH_CAP);
     // Autonomous emitters are never dropped, at most deferred one frame (§6.1).
-    const carry = sorted.slice(SPLAT_BATCH_CAP).find((x) => x.kind === "autonomous");
+    // (Bounded: emitters + reseed produce <= 3/frame, so the carry cannot grow.)
+    const carry = sorted.slice(SPLAT_BATCH_CAP).filter((x) => x.kind === "autonomous").slice(0, 3);
     this.queue.length = 0;
-    if (carry) { this.queue.push(carry); }
+    for (const c of carry) { this.queue.push(c); }
     for (const s of batch) { this.splat(s.x, s.y, s.dx, s.dy, s.radius, s); }
   }
 
@@ -903,10 +925,12 @@ class FluidInstance {
       this.stirClock += dt;
       if (this.stirClock >= 0.14) {
         this.stirClock = 0;
+        const sr = this.stir.radius || 0.25;
         this.queueSplat({
           x: rand(0.1, 0.9), y: rand(0.1, 0.9),
           dx: rand(-FORCE_CLAMP, FORCE_CLAMP), dy: rand(-FORCE_CLAMP, FORCE_CLAMP),
-          radius: rand(0.18, 0.3), phase: Math.random(), energy: 1.0, kind: "pointer"
+          radius: clamp(sr * rand(0.72, 1.2), 0.005, 0.6),
+          phase: Math.random(), energy: 1.0, kind: "pointer"
         });
       }
     } else {
@@ -995,9 +1019,9 @@ class FluidInstance {
     /* uBloom starts only once a frame has actually been submitted (Risk 2), so
      * the ignite never competes with shader compilation. */
     if (this.frameCount >= 2 && this.bloom < 1) {
-      // Signature ease cubic-bezier(0.19, 1, 0.22, 1), expo-out-like (spec §6.2).
+      // Signature ease cubic-bezier(0.19, 1, 0.22, 1) ≈ cubic in-out (spec §6.2).
       this.bloomT = Math.min(1, this.bloomT + dt / 1.5);
-      this.bloom = this.bloomT >= 1 ? 1 : 1 - Math.pow(2, -10 * this.bloomT);
+      this.bloom = easeInOutCubic(this.bloomT);
     }
 
     this.flushPointer(now);
@@ -1065,6 +1089,7 @@ class FluidInstance {
   /* Fatal-for-this-instance path: stop stepping, fade out, tell main.js. */
   fail(reason) {
     if (this.status === "lost" || this.status === "destroyed") { return; }
+    try { console.warn("fluid: " + this.name + " failed (" + reason + "), using blob fallback"); } catch (e) { /* noop */ }
     this.status = reason;
     this.running = false;
     this.visible = false;
@@ -1085,7 +1110,27 @@ class FluidInstance {
       if (lose) { lose.loseContext(); }
     } catch (e) { /* context already gone */ }
     this.velocity = this.density = this.pressure = this.divergence = this.curl = null;
+    this.disconnectObservers();
+    const dead = this.canvas;
+    if (dead) { setTimeout(() => { if (dead.parentNode) { dead.parentNode.removeChild(dead); } }, CROSSFADE_MS + 60); }
     window.dispatchEvent(new CustomEvent("fluid:fallback", { detail: { instance: this.name, reason: reason } }));
+  }
+
+  /* Detach everything observeResize/init registered, so a destroyed instance
+   * stops firing on detached containers and re-init does not accumulate. */
+  disconnectObservers() {
+    try { if (this._ro) { this._ro.disconnect(); } } catch (e) { /* noop */ }
+    this._ro = null;
+    try {
+      if (this._onMove) { window.removeEventListener("pointermove", this._onMove); }
+      if (this._onLeave) {
+        window.removeEventListener("pointerleave", this._onLeave);
+        if (typeof document !== "undefined" && document.documentElement) {
+          document.documentElement.removeEventListener("mouseleave", this._onLeave);
+        }
+      }
+    } catch (e) { /* noop */ }
+    this._onMove = this._onLeave = null;
   }
 
   destroy() {
@@ -1094,13 +1139,18 @@ class FluidInstance {
     this.running = false;
     this.visible = false;
     if (this.kind === "hero") { removeScrim(); }
+    this.disconnectObservers();
     try {
       const lose = this.gl && this.gl.getExtension("WEBGL_lose_context");
       if (lose) { lose.loseContext(); }
     } catch (e) { /* context already gone */ }
+    if (this._onLost && this.canvas) {
+      try { this.canvas.removeEventListener("webglcontextlost", this._onLost); } catch (e) { /* noop */ }
+    }
     if (this.canvas && this.canvas.parentNode) { this.canvas.parentNode.removeChild(this.canvas); }
-    if (this._onLost && this.canvas) { this.canvas.removeEventListener("webglcontextlost", this._onLost); }
-    this.velocity = this.density = this.pressure = null;
+    this.velocity = this.density = this.pressure = this.divergence = this.curl = null;
+    this.canvas = null;
+    this.gl = null;
     window.dispatchEvent(new CustomEvent("fluid:fallback", { detail: { instance: this.name, reason: "destroyed" } }));
   }
 }
@@ -1118,6 +1168,10 @@ let lastFailure = null; // construction-failure reason when no instance survives
  * instead of leaving them self-rescheduling forever. */
 function driver(now, gen) {
   if (gen !== driverGen) { return; }
+  const h0 = instances.hero, e0 = instances.echo;
+  const anyLive = (h0 && h0.status === "ready" && (h0.visible || h0.crossfadeEnd))
+    || (e0 && e0.status === "ready" && e0.visible);
+  if (!anyLive && !(h0 && h0.crossfadeEnd)) { driverStarted = false; return; }
   if (!document.hidden) {
     const h = instances.hero;
     const e = instances.echo;
@@ -1180,6 +1234,7 @@ function ensureScrim() {
 /* ResizeObserver on the container, rAF-throttled, with a zero-size guard (§4). */
 function observeResize(inst) {
   if (typeof ResizeObserver === "undefined" || !inst.container) { return; }
+  if (inst._ro) { try { inst._ro.disconnect(); } catch (e) { /* noop */ } }
   let pending = false;
   const ro = new ResizeObserver(() => {
     if (pending) { return; }
@@ -1207,6 +1262,7 @@ function observeResize(inst) {
     });
   });
   ro.observe(inst.container);
+  inst._ro = ro;
 }
 
 let allDestroyed = false;
@@ -1229,7 +1285,12 @@ function containerFor(instance) {
 
 function init(instance, opts) {
   const name = instance === "echo" ? "echo" : "hero";
-  if (instances[name]) { return instances[name]; }   // idempotent
+  const prev = instances[name];
+  if (prev) {
+    if (prev.status === "ready") { return prev; }   // idempotent
+    try { prev.destroy(); } catch (e) { /* noop */ }
+    delete instances[name];   // dead instance: recreate instead of returning it
+  }
   allDestroyed = false;
 
   const container = containerFor(name);
@@ -1258,8 +1319,15 @@ function init(instance, opts) {
       // Pointer drive lives here: the canvas is pointer-events:none, so the
       // listener must be on window (spec §6.4).
       if (isFinePointer() && !isReduced()) {
-        window.addEventListener("pointermove", (e) => inst.onPointer(e), { passive: true });
-        window.addEventListener("pointerleave", () => { inst.onLeave(performance.now()); }, { passive: true });
+        inst._onMove = (e) => inst.onPointer(e);
+        inst._onLeave = () => { inst.onLeave(performance.now()); };
+        window.addEventListener("pointermove", inst._onMove, { passive: true });
+        window.addEventListener("pointerleave", inst._onLeave, { passive: true });
+        // window pointerleave rarely fires; documentElement mouseleave is the
+        // reliable leave signal (same handler, both removed in destroy()).
+        if (typeof document !== "undefined" && document.documentElement) {
+          document.documentElement.addEventListener("mouseleave", inst._onLeave, { passive: true });
+        }
       }
     }
     observeResize(inst);
@@ -1284,7 +1352,7 @@ function init(instance, opts) {
 
 function inject(s) {
   const inst = instances.hero;
-  if (!inst || inst.status !== "ready") { return; }
+  if (!inst || inst.status !== "ready" || inst.reduced) { return; }
   inst.queueSplat(s);
 }
 
@@ -1304,11 +1372,11 @@ function setVisible(instance, visible) {
 function stir(o) {
   const opts = o || {};
   const intensity = clamp(opts.intensity != null ? opts.intensity : 1, 0, 1);
-  const durationMs = opts.durationMs != null ? opts.durationMs : 6000;
-  const radius = opts.radius != null ? opts.radius : 0.25;
+  const durationMs = clamp(Number.isFinite(opts.durationMs) ? opts.durationMs : 6000, 0, 12000);
+  const radius = clamp(Number.isFinite(opts.radius) ? opts.radius : 0.25, 0.005, 0.6);
   const inst = instances.hero;
   if (!inst || inst.status !== "ready" || inst.reduced) { return; }
-  inst.stir = { until: performance.now() + durationMs, intensity };
+  inst.stir = { until: performance.now() + durationMs, intensity, radius };
   for (let i = 0; i < 4; i++) {
     inst.queueSplat({
       x: rand(0.15, 0.85), y: rand(0.15, 0.85),
@@ -1322,9 +1390,12 @@ function tint(o) {
   const opts = o || {};
   const inst = instances.hero;
   if (!inst || inst.status !== "ready" || inst.reduced) { return; }
-  inst.tint.color = opts.color || [0.2, 1.0, 0.35];   // matrix green default
-  inst.tint.rampMs = opts.rampMs != null ? opts.rampMs : 500;
-  inst.tint.holdMs = opts.holdMs != null ? opts.holdMs : 4500;
+  const c = opts.color;
+  inst.tint.color = (Array.isArray(c) && c.length === 3
+    && c.every((v) => Number.isFinite(v) && v >= 0 && v <= 1))
+    ? [c[0], c[1], c[2]] : [0.2, 1.0, 0.35];   // matrix green default
+  inst.tint.rampMs = Number.isFinite(opts.rampMs) ? Math.max(0, opts.rampMs) : 500;
+  inst.tint.holdMs = Number.isFinite(opts.holdMs) ? Math.max(0, opts.holdMs) : 4500;
   inst.tint.amount = 0;   // retrigger always ramps 0→1, never resumes mid-tint
   inst.tint.phase = "ramp";
 }
@@ -1346,9 +1417,10 @@ function setTheme(to) {
   ]);
   inst.paletteNow = { a: from, b: incoming };
   inst.mix = 0;
-  inst.crossfadeEnd = performance.now() + ((window.THEME_WIPE && window.THEME_WIPE.duration)
+  inst.crossfadeTotal = ((window.THEME_WIPE && window.THEME_WIPE.duration)
     ? window.THEME_WIPE.duration * 1000
     : (inst.wipeMs || 700));
+  inst.crossfadeEnd = performance.now() + inst.crossfadeTotal;
   inst.reduced = isReduced();
   if (inst.reduced) {
     inst.paletteNow = { a: incoming, b: incoming };
@@ -1368,9 +1440,7 @@ function easeInOutCubic(t) {
 function tickCrossfade(now) {
   const inst = instances.hero;
   if (!inst || !inst.crossfadeEnd) { return; }
-  const total = (window.THEME_WIPE && window.THEME_WIPE.duration)
-    ? window.THEME_WIPE.duration * 1000
-    : (inst.wipeMs || 700);
+  const total = inst.crossfadeTotal || inst.wipeMs || 700;
   const remaining = inst.crossfadeEnd - now;
   const m = clamp(1 - remaining / total, 0, 1);
   inst.mix = easeInOutCubic(m);
@@ -1445,6 +1515,17 @@ if (typeof ResizeObserver === "undefined") {
       else if (inst.running && inst.visible) { reseedInstance(inst); }
     }
   }, { passive: true });
+}
+
+/* OS reduced-motion flipped mid-session: freeze live sims rather than keep
+ * animating until reload (one-way; un-flipping needs a reload). */
+if (typeof matchMedia === "function") {
+  try {
+    const mq = matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = (e) => { if (e && e.matches) { try { freeze(); } catch (err) { /* noop */ } } };
+    if (mq.addEventListener) { mq.addEventListener("change", onChange); }
+    else if (mq.addListener) { mq.addListener(onChange); }
+  } catch (e) { /* noop */ }
 }
 
 /* A frozen frame can lose its surface across a tab restore, so redisplay it

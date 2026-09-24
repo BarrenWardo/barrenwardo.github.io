@@ -103,6 +103,8 @@
   function beginFluidWindow() {
     if (fluidCommitted) return;
     if (window.Fluid) {
+      fluidCommitted = true;
+      window.removeEventListener("fluid:ready", onFluidReady);
       startHeroFluidOnce();
       initFluidVisibility();   // module was already here: install pausing now
       return;
@@ -127,8 +129,18 @@
   function heroUV(clientX, clientY) {
     /* Plain clamp, not gsap.utils: the terminal path can reach this under the
        no-GSAP early exit (spec §6.4's own reason for banning gsap.utils.random
-       inside fluid.js). */
+       inside fluid.js). Prefer the live canvas rect so a future layout change
+       cannot silently mis-map couplings; viewport dims are the fallback. */
     const clamp01 = (n) => Math.min(1, Math.max(0, n));
+    try {
+      const c = document.querySelector(".ambient .fluid-canvas");
+      if (c) {
+        const r = c.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          return { x: clamp01((clientX - r.left) / r.width), y: clamp01(1 - (clientY - r.top) / r.height) };
+        }
+      }
+    } catch (e) { /* fall through to viewport math */ }
     return {
       x: clamp01(clientX / Math.max(1, innerWidth)),
       y: clamp01(1 - clientY / Math.max(1, innerHeight))
@@ -162,6 +174,7 @@
     window.addEventListener("fluid:first-frame", (e) => {
       const name = e.detail && e.detail.instance;
       if (name !== "hero") return;
+      try { initFluidVisibility(); } catch (err) { /* ScrollTrigger may still be missing */ }
       heroFluidReady = true;
       /* Hide the blobs only after the canvas has faded in, so the handoff reads as
          a cross-fade rather than a dip through the page background. */
@@ -186,7 +199,30 @@
      actually approached — which keeps the likeliest iOS failure from happening. */
   function initFluidVisibility() {
     if (fluidVisibilityInstalled) return;
-    if (typeof ScrollTrigger === "undefined" || !window.Fluid) return;
+    if (!window.Fluid) return;
+    // Partial-CDN path (GSAP core without ScrollTrigger, or ScrollTrigger late):
+    // an IntersectionObserver enforces the same §4 pausing without the plugin.
+    if (typeof ScrollTrigger === "undefined") {
+      if (typeof IntersectionObserver === "undefined") return;   // retried on first-frame
+      fluidVisibilityInstalled = true;
+      const set = (inst, on) => { try { window.Fluid.setVisible(inst, on); } catch (e) { /* noop */ } };
+      const hero = document.querySelector(".hero");
+      const band = document.querySelector(".signals");
+      if (hero) {
+        new IntersectionObserver((es) => {
+          es.forEach((en) => { set("hero", en.isIntersecting); });
+        }, { threshold: 0 }).observe(hero);
+      }
+      if (band) {
+        new IntersectionObserver((es) => {
+          es.forEach((en) => {
+            if (en.isIntersecting) { startEchoFluidOnce(); set("echo", true); }
+            else { set("echo", false); }
+          });
+        }, { threshold: 0 }).observe(band);
+      }
+      return;
+    }
     fluidVisibilityInstalled = true;
     ScrollTrigger.create({
       trigger: ".hero", start: "top top", end: "bottom top",
@@ -884,13 +920,13 @@
       }
       /* Coupling 2: a key that actually inserts a character stirs the field.
          IME composition, paste and mobile predictive text do not count (§6.4). */
-      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && heroFluidReady) {
+      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && heroFluidReady && !isReduced()) {
         const r = input.getBoundingClientRect();
         const uv = heroUV(r.left + r.width / 2, r.top + r.height / 2);
         fluidInject({
           x: uv.x, y: uv.y,
           dx: (Math.random() - 0.5) * 4, dy: (Math.random() - 0.5) * 4,
-          radius: 0.125, phase: Math.random(), energy: 0.7, kind: "reveal"
+          radius: 0.125, phase: Math.random(), energy: 0.7, kind: "pointer"
         });
       }
     });
@@ -929,9 +965,18 @@
       try { initFooter(); } catch (e) { /* noop */ }
       try { initStats(); } catch (e) { /* noop */ }
       try { heroRevealFallback(); } catch (e) { /* static markup stays */ }
+      // The sim must work when GSAP is blocked but OGL loaded fine (§6.4, §7):
+      // the bridge + window + visibility wiring below are all GSAP-free.
+      try { initFluidBridge(); } catch (e) { /* noop */ }
+      try { beginFluidWindow(); } catch (e) { /* noop */ }
+      try { initFluidVisibility(); } catch (e) { /* noop */ }
       return;
     }
-    gsap.registerPlugin.apply(gsap, [ScrollTrigger, SplitText, ScrambleTextPlugin].filter(function (p) { return p; }));
+    gsap.registerPlugin.apply(gsap, [
+      typeof ScrollTrigger !== "undefined" ? ScrollTrigger : null,
+      typeof SplitText !== "undefined" ? SplitText : null,
+      typeof ScrambleTextPlugin !== "undefined" ? ScrambleTextPlugin : null
+    ].filter(function (p) { return p; }));
     initLenis();
     initTheme();
     initTerminal();
