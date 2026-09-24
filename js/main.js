@@ -2,11 +2,23 @@
 (function () {
   "use strict";
 
+  /* Owned here, published before fluid:ready can fire, and read by BOTH the theme
+     wipe and the fluid's palette crossfade so the two clocks cannot drift apart
+     (spec §6.9). */
+  window.THEME_WIPE = { duration: 0.7, ease: "power3.inOut" };
+
   let lenis = null;
   let bootDone = false;
   let heroRevealed = false;
   let bootTl = null;
   let ringTl = null;
+  let blobTweens = [];
+  let heroFluidStarted = false;
+  let heroFluidReady = false;
+  let echoFluidStarted = false;
+  let fluidCommitted = false;
+  let seedDots = null;
+  let dotsExist = () => false;
 
   const REDUCED_QUERY = "(prefers-reduced-motion: reduce)";
   const isReduced = () =>
@@ -64,12 +76,163 @@
     }
   }
 
+  /* ---------- Fluid handshake (spec §3) ---------- */
+
+  /* Named handler with teardown on BOTH arms: a module that never loads fires no
+     event, and a module that loads late must not swap the media layer. */
+  function onFluidReady() {
+    if (fluidCommitted) return;
+    fluidCommitted = true;
+    window.removeEventListener("fluid:ready", onFluidReady);
+    startHeroFluidOnce();
+  }
+
+  /* The only entry point that may create the hero sim — guarded, so boot
+     completion, a skip, and a late module can all call it harmlessly. */
+  function startHeroFluidOnce() {
+    if (heroFluidStarted || !window.Fluid || window.Fluid.status !== "ready") return;
+    heroFluidStarted = true;
+    window.Fluid.init("hero", {});
+  }
+
+  /* Deadline is anchored to the reveal, not to script init: init runs under the
+     opaque boot overlay, where a 3s window would already have expired (spec §3). */
+  function beginFluidWindow() {
+    if (!window.Fluid || window.Fluid.status !== "ready") {
+      window.addEventListener("fluid:ready", onFluidReady, { once: true });
+      setTimeout(() => {
+        if (fluidCommitted) return;
+        fluidCommitted = true;            // permanent for this page load
+        window.removeEventListener("fluid:ready", onFluidReady);
+      }, 3000);
+      return;
+    }
+    startHeroFluidOnce();
+  }
+
+  function fluidInject(splat) {
+    if (!heroFluidReady || !window.Fluid || typeof window.Fluid.inject !== "function") return;
+    window.Fluid.inject(splat);
+  }
+
+  /* Screen → sim UV. The hero canvas spans `.ambient` (fixed, inset 0), so
+     viewport coordinates are already canvas coordinates; only normalization and
+     the y-flip are missing — the shader's uv origin is bottom-left (spec §4). */
+  function heroUV(clientX, clientY) {
+    /* Plain clamp, not gsap.utils: the terminal path can reach this under the
+       no-GSAP early exit (spec §6.4's own reason for banning gsap.utils.random
+       inside fluid.js). */
+    const clamp01 = (n) => Math.min(1, Math.max(0, n));
+    return {
+      x: clamp01(clientX / Math.max(1, innerWidth)),
+      y: clamp01(1 - clientY / Math.max(1, innerHeight))
+    };
+  }
+
+  /* The palette ribbon is sage → amber → oxblood → cobalt, so amber sits at ¼ of
+     the cycle and cobalt at ¾ (spec §6.4). */
+  const PHASE_AMBER = 0.25;
+
+  function fluidStir(opts) {
+    if (!heroFluidReady || !window.Fluid) return;
+    try { window.Fluid.stir(opts); } catch (e) { /* degrades to the starfield */ }
+  }
+
+  function fluidTint(opts) {
+    if (!heroFluidReady || !window.Fluid) return;
+    try { window.Fluid.tint(opts); } catch (e) { /* tint is optional */ }
+  }
+
+  /* Blobs are paused, never killed, so the fallback is a resume rather than a
+     rebuild (spec §6.11). */
+  function setBlobsLive(live) {
+    document.querySelectorAll(".ambient .blob").forEach((b) => {
+      b.style.display = live ? "" : "none";
+    });
+    blobTweens.forEach((t) => { if (live) { t.resume(); } else { t.pause(); } });
+  }
+
+  function initFluidBridge() {
+    window.addEventListener("fluid:first-frame", (e) => {
+      const name = e.detail && e.detail.instance;
+      if (name !== "hero") return;
+      heroFluidReady = true;
+      /* Hide the blobs only after the canvas has faded in, so the handoff reads as
+         a cross-fade rather than a dip through the page background. */
+      setTimeout(() => { if (heroFluidReady) setBlobsLive(false); }, 620);
+    });
+    window.addEventListener("fluid:fallback", (e) => {
+      const name = e.detail && e.detail.instance;
+      if (name !== "hero") return;
+      heroFluidReady = false;
+      setBlobsLive(true);
+    });
+  }
+
+  function startEchoFluidOnce() {
+    if (echoFluidStarted || !window.Fluid || window.Fluid.status !== "ready") return;
+    echoFluidStarted = true;
+    window.Fluid.init("echo", { quality: "low" });
+  }
+
+  /* Off-viewport pausing is mandatory, not an optimisation (spec §4). The echo is
+     also created lazily here, so only one WebGL context exists until the band is
+     actually approached — which keeps the likeliest iOS failure from happening. */
+  function initFluidVisibility() {
+    if (typeof ScrollTrigger === "undefined" || !window.Fluid) return;
+    ScrollTrigger.create({
+      trigger: ".hero", start: "top top", end: "bottom top",
+      onToggle: (self) => { try { window.Fluid.setVisible("hero", self.isActive); } catch (e) { /* noop */ } }
+    });
+    ScrollTrigger.create({
+      trigger: ".signals", start: "top bottom", end: "bottom top",
+      onToggle: (self) => {
+        try {
+          if (self.isActive) { startEchoFluidOnce(); window.Fluid.setVisible("echo", true); }
+          else { window.Fluid.setVisible("echo", false); }
+        } catch (e) { /* noop */ }
+      }
+    });
+  }
+
+  /* ---------- Nav blending (spec §6.15) ---------- */
+  /* Difference keeps the nav part of the artwork over the fluid and is scoped to
+     the hero's scroll range; past it the nav resolves to var(--text). The
+     obsidian signal band is black in both themes, so it gets its own white state
+     rather than trusting the light theme's --text. Runs even under reduced
+     motion: this is a contrast fix, not an animation. */
+  function initNavBlend() {
+    const root = document.documentElement;
+    const hero = document.querySelector(".hero");
+    if (!hero) return;
+    const signals = document.querySelector(".signals");
+    const NAV_BAND = 96; // nav height + breathing room
+
+    /* Deterministic first paint — never wait for a ScrollTrigger's first refresh
+       to decide whether the nav is legible. */
+    const heroRect = hero.getBoundingClientRect();
+    root.classList.toggle("nav-blend", heroRect.top <= 0 && heroRect.bottom > NAV_BAND);
+
+    if (typeof ScrollTrigger === "undefined") return;
+    ScrollTrigger.create({
+      trigger: hero, start: "top top", end: "bottom " + NAV_BAND + "px",
+      onToggle: (self) => root.classList.toggle("nav-blend", self.isActive)
+    });
+    if (signals) {
+      ScrollTrigger.create({
+        trigger: signals, start: "top " + NAV_BAND + "px", end: "bottom " + NAV_BAND + "px",
+        onToggle: (self) => root.classList.toggle("nav-on-dark", self.isActive)
+      });
+    }
+  }
+
   /* ---------- Hero reveal (created after overlay lifts, never at init) ---------- */
   function heroReveal() {
     if (heroRevealed) return;
     heroRevealed = true;
     if (typeof gsap === "undefined") return;
     const reduced = isReduced();
+    beginFluidWindow();
 
     if (typeof SplitText !== "undefined") {
       try {
@@ -126,6 +289,21 @@
         yTo((e.clientY - (r.top + r.height / 2)) * 0.2);
       });
       btn.addEventListener("mouseleave", () => { xTo(0); yTo(0); });
+      /* Coupling 1: one warm, diffuse bloom beneath the element's center on
+         enter only — never per mousemove. Physically it should read as a warm
+         hand held near the liquid, not a sharp poke (spec §6.4). */
+      btn.addEventListener("mouseenter", () => {
+        if (!heroFluidReady) return;
+        const r = btn.getBoundingClientRect();
+        const uv = heroUV(r.left + r.width / 2, r.top + r.height * 0.75);
+        fluidInject({
+          x: uv.x, y: uv.y,
+          dx: (Math.random() - 0.5) * 6, dy: (Math.random() - 0.5) * 6,
+          radius: 0.25,
+          phase: PHASE_AMBER + (Math.random() - 0.5) * 0.08,
+          energy: 0.9, kind: "pointer"
+        });
+      });
     });
   }
 
@@ -339,8 +517,18 @@
     ScrollTrigger.create({
       trigger: ".orbit", start: "top bottom", end: "bottom top",
       onUpdate(self) {
-        const boost = gsap.utils.clamp(1, 6, 1 + Math.abs(self.getVelocity()) / 1200);
+        const v = self.getVelocity();
+        const boost = gsap.utils.clamp(1, 6, 1 + Math.abs(v) / 1200);
         gsap.to(ringTl, { timeScale: boost, duration: 0.6, ease: "power2.out", overwrite: true });
+        /* Coupling 4: scroll velocity pushes the fluid while scrolling. The sim's
+           own splat cap absorbs the event rate; this only gates the threshold. */
+        if (heroFluidReady && Math.abs(v) > 250) {
+          fluidInject({
+            x: 0.5, y: 0.42,
+            dx: gsap.utils.clamp(-6, 6, v / 700), dy: gsap.utils.clamp(-6, 6, v / 1400),
+            radius: 0.26, phase: Math.random(), energy: 0.9, kind: "scroll"
+          });
+        }
       }
     });
 
@@ -369,10 +557,28 @@
     document.documentElement.classList.add("js-reveal");
     ScrollTrigger.batch("[data-reveal]", {
       start: "top 88%",
-      onEnter: (els) => gsap.to(els, {
-        autoAlpha: 1, y: 0, duration: 0.7, ease: "power2.out", stagger: 0.08, overwrite: true,
-        startAt: { y: 40 }
-      }),
+      onEnter: (els) => {
+        /* Coupling 3: each reveal batch sends ONE slow, wide impulse — it batches
+           into the same single splat pass as scroll velocity, never a second
+           pass (spec §6.4, §6.1). */
+        const first = els[0];
+        if (heroFluidReady && first) {
+          const r = first.getBoundingClientRect();
+          const uv = heroUV(r.left + r.width / 2, r.top + Math.min(r.height, innerHeight) / 2);
+          fluidInject({
+            x: uv.x, y: uv.y,
+            dx: (Math.random() - 0.5) * 6, dy: (Math.random() - 0.5) * 6,
+            radius: 0.3,
+            phase: Math.random(),
+            energy: gsap.utils.clamp(0.4, 1, r.height / Math.max(1, innerHeight) + 0.3),
+            kind: "reveal"
+          });
+        }
+        return gsap.to(els, {
+          autoAlpha: 1, y: 0, duration: 0.7, ease: "power2.out", stagger: 0.08, overwrite: true,
+          startAt: { y: 40 }
+        });
+      },
       once: true
     });
     gsap.set("[data-reveal]", { autoAlpha: 0 });
@@ -414,26 +620,18 @@
     if (typeof gsap === "undefined") return;
     const reduced = isReduced();
     if (!reduced) {
-      document.querySelectorAll(".blob").forEach((b, i) => {
-        gsap.to(b, {
-          x: gsap.utils.random(-90, 90), y: gsap.utils.random(-70, 70),
-          scale: gsap.utils.random(0.9, 1.25),
-          duration: 18 + i * 6, ease: "sine.inOut", repeat: -1, yoyo: true, repeatRefresh: true
-        });
-      });
+      /* Plain per-blob tweens (not a timeline), kept in an array so the fluid
+         handoff can PAUSE and RESUME them. Never killed: that is what makes the
+         fallback a resume instead of a rebuild (spec §6.11). */
+      blobTweens = Array.from(document.querySelectorAll(".blob")).map((b, i) => gsap.to(b, {
+        x: gsap.utils.random(-90, 90), y: gsap.utils.random(-70, 70),
+        scale: gsap.utils.random(0.9, 1.25),
+        duration: 18 + i * 6, ease: "sine.inOut", repeat: -1, yoyo: true, repeatRefresh: true
+      }));
     }
     initParticles();
-    if (!reduced && isFinePointer()) {
-      const glow = document.getElementById("cursor-glow");
-      if (glow) {
-        const xTo = gsap.quickTo(glow, "x", { duration: 0.4, ease: "power2.out" });
-        const yTo = gsap.quickTo(glow, "y", { duration: 0.4, ease: "power2.out" });
-        window.addEventListener("mousemove", (e) => { xTo(e.clientX); yTo(e.clientY); }, { passive: true });
-      }
-    } else {
-      const glow = document.getElementById("cursor-glow");
-      if (glow) glow.style.display = "none";
-    }
+    /* The cursor glow is retired: the fluid answers the pointer directly, and a
+       second pointer-following layer would only advertise it twice (§6.13). */
     if (typeof ScrollTrigger !== "undefined" && !reduced) {
       const bar = document.querySelector(".progress-bar");
       if (bar) {
@@ -461,15 +659,20 @@
       canvas.width = Math.max(1, Math.floor(r.width));
       canvas.height = Math.max(1, Math.floor(r.height));
     }
-    function seed() {
+    /* Drift is retired (spec §6.13): the canvas starts empty and allocates dots
+       only when an easter-egg mode asks for them. Modes must therefore be able
+       to cold-start their own state — visibility pausing gates stepping, never
+       mode entry. */
+    seedDots = function seed() {
       const n = window.innerWidth < 800 ? 12 : 24;
       dots = Array.from({ length: reduced ? 0 : n }, () => ({
         x: Math.random(), y: Math.random(),
         vx: (Math.random() - 0.5) * 0.0006, vy: -(0.0004 + Math.random() * 0.0009),
         r: 1 + Math.random() * 1.8, sx: 0, sv: 0
       }));
-    }
-    resize(); seed();
+    };
+    dotsExist = () => dots.length > 0;
+    resize();
     window.addEventListener("resize", () => { resize(); });
 
     document.addEventListener("visibilitychange", () => {
@@ -483,7 +686,9 @@
     }
 
     function frame() {
-      if (running && visible && dots.length) {
+      /* Drift no longer renders at all — the fluid is the ambient layer. The
+         canvas exists purely for the two easter-egg modes. */
+      if (running && visible && dots.length && particleMode !== "drift") {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         const theme = document.documentElement.dataset.theme;
         ctx.fillStyle = theme === "light" ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.55)";
@@ -495,12 +700,8 @@
             ctx.fillStyle = theme === "light" ? "rgba(0,0,0,0.75)" : "rgba(255,255,255,0.8)";
             ctx.fillRect(d.x * canvas.width, (d.y * canvas.height) % canvas.height, 2, 6);
             ctx.fillStyle = theme === "light" ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.55)";
-          } else {
-            ctx.beginPath();
-            ctx.arc(d.x * canvas.width, d.y * canvas.height, d.r, 0, Math.PI * 2);
-            ctx.fill();
           }
-          d.x += d.vx; d.y += d.vy * (particleMode === "drift" ? 1 : 6);
+          d.x += d.vx; d.y += d.vy * 6;
           if (d.y < -0.02) { d.y = 1.02; d.x = Math.random(); }
           if (d.x < -0.02) d.x = 1.02; else if (d.x > 1.02) d.x = -0.02;
         });
@@ -514,6 +715,8 @@
   function canvasEffect(mode, ms) {
     if (isReduced() || particleMode !== "drift") return;
     particleMode = mode;
+    /* Cold-start dot state on entry — never gated on visibility (spec §6.13). */
+    if (!dotsExist() && seedDots) seedDots();
     setTimeout(() => { particleMode = "drift"; }, ms);
   }
 
@@ -525,29 +728,52 @@
     if (btn) btn.setAttribute("aria-pressed", t === "light" ? "true" : "false");
     store.set("theme", t);
   }
+  /* One path for every theme change, so the button and the terminal command can
+     never diverge, and the fluid crossfade always rides the wipe's own clock
+     (spec §6.9). Returns the new theme. */
+  function switchTheme(originEl) {
+    const from = currentTheme();
+    const to = from === "light" ? "dark" : "light";
+    const notify = () => {
+      if (window.Fluid && typeof window.Fluid.setTheme === "function") {
+        try { window.Fluid.setTheme(to); } catch (e) { /* keep the static palette */ }
+      }
+    };
+    if (isReduced() || typeof gsap === "undefined") { applyTheme(to); notify(); return to; }
+
+    const wipe = document.createElement("div");
+    wipe.className = "theme-wipe";
+    /* Paint from the OUTGOING theme's real background. The previous literals
+       (#050810 / #f3f6ff) were the retired aurora palette, and against the new
+       fluid they read as a colour cast crossing the page. */
+    const outgoing = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+    wipe.style.background = outgoing || (from === "dark" ? "#000000" : "#ffffff");
+
+    const el = originEl || document.getElementById("theme-toggle");
+    const r = el ? el.getBoundingClientRect() : { left: innerWidth / 2, top: 0, width: 0, height: 0 };
+    wipe.style.setProperty("--ox", (r.left + r.width / 2) + "px");
+    wipe.style.setProperty("--oy", (r.top + r.height / 2) + "px");
+    document.body.appendChild(wipe);
+
+    applyTheme(to); // the real theme flips instantly underneath; the wipe carries the old palette away
+    notify();
+
+    const o = { r: 0 };
+    gsap.to(o, {
+      r: Math.hypot(innerWidth, innerHeight),
+      duration: window.THEME_WIPE.duration,
+      ease: window.THEME_WIPE.ease,
+      onUpdate: () => wipe.style.setProperty("--reveal", o.r + "px"),
+      onComplete: () => wipe.remove()
+    });
+    return to;
+  }
+
   function initTheme() {
     const btn = document.getElementById("theme-toggle");
     if (!btn) return;
     btn.setAttribute("aria-pressed", currentTheme() === "light" ? "true" : "false");
-    btn.addEventListener("click", () => {
-      const from = currentTheme();
-      const to = from === "light" ? "dark" : "light";
-      if (isReduced() || typeof gsap === "undefined") { applyTheme(to); return; }
-      const wipe = document.createElement("div");
-      wipe.className = "theme-wipe";
-      wipe.style.background = from === "dark" ? "#050810" : "#f3f6ff";
-      const r = btn.getBoundingClientRect();
-      wipe.style.setProperty("--ox", (r.left + r.width / 2) + "px");
-      wipe.style.setProperty("--oy", (r.top + r.height / 2) + "px");
-      document.body.appendChild(wipe);
-      applyTheme(to); // real theme flips instantly underneath; wipe carries outgoing palette away
-      const o = { r: 0 };
-      gsap.to(o, {
-        r: Math.hypot(innerWidth, innerHeight), duration: 0.7, ease: "power3.inOut",
-        onUpdate: () => wipe.style.setProperty("--reveal", o.r + "px"),
-        onComplete: () => wipe.remove()
-      });
-    });
+    btn.addEventListener("click", () => { switchTheme(btn); });
   }
 
   /* ---------- Terminal + easter eggs ---------- */
@@ -606,14 +832,19 @@
         termPrint(box, "try: ls projects");
       }
     } else if (b === "theme") {
-      const to = currentTheme() === "light" ? "dark" : "light";
-      applyTheme(to);
-      termPrint(box, "theme → " + to);
+      termPrint(box, "theme → " + switchTheme());
     } else if (b === "clear") {
       box.innerHTML = "";
     } else if (b === "matrix") {
       if (isReduced()) termPrint(box, "matrix: disabled under reduced motion.");
-      else { canvasEffect("matrix", 5000); termPrint(box, "wake up, Neo… (5s)"); }
+      else {
+        /* Tint clock lives inside the stir clock: ~5s tint within ~6s stir, and
+           the tint releases onto whatever palette is current (spec §6.14). */
+        canvasEffect("matrix", 5000);
+        fluidStir({ intensity: 1, durationMs: 6000 });
+        fluidTint({ color: [0.2, 1.0, 0.35], rampMs: 500, holdMs: 4500 });
+        termPrint(box, "wake up, Neo… (5s)");
+      }
     } else if (cmd.toLowerCase() === "sudo make me a sandwich") {
       termPrint(box, "permission denied… just kidding. 🥪 here you go.");
     } else {
@@ -640,6 +871,18 @@
           ? Math.max(0, histIdx - 1)
           : Math.min(hist.length, histIdx + 1);
         input.value = hist[histIdx] || "";
+        return;
+      }
+      /* Coupling 2: a key that actually inserts a character stirs the field.
+         IME composition, paste and mobile predictive text do not count (§6.4). */
+      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && heroFluidReady) {
+        const r = input.getBoundingClientRect();
+        const uv = heroUV(r.left + r.width / 2, r.top + r.height / 2);
+        fluidInject({
+          x: uv.x, y: uv.y,
+          dx: (Math.random() - 0.5) * 4, dy: (Math.random() - 0.5) * 4,
+          radius: 0.125, phase: Math.random(), energy: 0.7, kind: "reveal"
+        });
       }
     });
     // Konami → hyperdrive (desktop keyboard-only; matrix covers mobile)
@@ -652,6 +895,8 @@
         pos = 0;
         if (!isReduced() && isFinePointer()) {
           canvasEffect("hyperdrive", 6000);
+          /* The page's best easter egg, now reaching its largest surface. */
+          fluidStir({ intensity: 1, durationMs: 6000 });
           const box = document.getElementById("term-output");
           if (box) termPrint(box, "HYPERDRIVE engaged (6s)");
         }
@@ -686,6 +931,11 @@
     initReveals();
     initOrbit();
     initProjectTilt();
+    initNavBlend();
+    /* The fluid bridge must be listening before `heroReveal()` opens the 3s
+       window, which `finish()` triggers inside `initBoot()`. */
+    initFluidBridge();
+    initFluidVisibility();
     initBoot();
     initStats();
     if (document.fonts && document.fonts.ready) {

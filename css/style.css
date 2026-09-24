@@ -221,17 +221,25 @@ main, .footer { background: var(--bg); }
 .hero { min-height: 100svh; display: flex; align-items: center; }
 .hero-inner { text-align: center; }
 
-/* Nav — fixed, difference-blended over the wash. */
+/* Nav — fixed. Difference-blended ONLY over the hero's fluid (`html.nav-blend`),
+   where it makes the nav part of the artwork. Over opaque content the blend is
+   dropped and the nav resolves to var(--text), because difference over the
+   lifted-terracotta and cobalt anchors resolves to similar-luminance glyphs
+   (1.05:1 and 1.10:1 — spec §6.15): a legibility failure, not a risk. */
 .site-nav {
   position: fixed; top: 0; left: 0; right: 0; z-index: 95;
-  mix-blend-mode: difference; color: #fff;
   display: flex; align-items: center; justify-content: space-between;
   max-width: 1078px; margin: 0 auto;
   padding: 1rem clamp(1.25rem, 4vw, 2.5rem);
+  color: var(--text);
 }
-.site-nav .wordmark { font-size: 16px; font-weight: 400; text-decoration: none; color: #fff; }
+html.nav-blend .site-nav { mix-blend-mode: difference; color: #fff; }
+/* The mid-page obsidian band is black in BOTH themes, so the nav must stay white
+   there too — the light theme's var(--text) would be black on black. */
+html.nav-on-dark .site-nav { color: #fff; }
+.site-nav .wordmark { font-size: 16px; font-weight: 400; text-decoration: none; color: inherit; }
 .site-links { display: flex; gap: 1.25rem; padding-right: 3.25rem; }
-.site-links a { font-size: 12px; font-weight: 400; text-decoration: none; color: #fff; }
+.site-links a { font-size: 12px; font-weight: 400; text-decoration: none; color: inherit; }
 
 /* Type */
 h1, h2 { margin: 0 0 1rem; text-wrap: balance; }
