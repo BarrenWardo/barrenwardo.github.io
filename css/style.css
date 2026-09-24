@@ -8,8 +8,30 @@
   --text: #000000;
   --muted: #6d6d6d;
   --line: #000000;
+  --page-bg: #ffffff;   /* page background, captured outside the obsidian band */
   --ease: cubic-bezier(0.19,1,0.22,1);
   color-scheme: light;
+
+  /* Media palette — light theme. Read by js/fluid.js; never text/border/fill.
+     Contrast (computed, spec §5.1): sage 13.74:1, amber 11.19:1,
+     terracotta 5.69:1, cobalt 5.71:1 — all on black type. */
+  --media-sage: rgb(160, 224, 171);
+  --media-amber: rgb(255, 172, 46);
+  --media-oxblood: rgb(201, 106, 88);
+  --media-cobalt: #3b82f6;
+
+  /* Hero scrim: light theme lightens the core so black type holds. */
+  --scrim-core: rgba(255, 255, 255, 0.72);
+  --scrim-edge: rgba(255, 255, 255, 0);
+
+  /* Vignette — unitless opacity, deliberately weaker in light theme so the
+     field stays luminous at the edges (spec §6.7, §6.8). */
+  --vignette: 0.06;
+  --vignette-tint: 0, 0, 0;
+
+  /* Provisional: only wins if rendered-pixel measurement shows --muted
+     failing over the fluid (spec §6.7). */
+  --muted-on-fluid: #545454;
 }
 :root[data-theme="dark"] {
   --bg: #000000;
@@ -17,8 +39,34 @@
   --text: #ffffff;
   --muted: #a8a8a8;
   --line: rgba(255,255,255,0.35);
+  --page-bg: #000000;
   --ease: cubic-bezier(0.19,1,0.22,1);
   color-scheme: dark;
+
+  /* Media palette — dark theme, deepened. Contrast on white type (computed,
+     spec §5.1): 9.85:1 / 9.52:1 / 15.01:1 / 11.96:1. */
+  --media-sage: rgb(43, 74, 51);
+  --media-amber: rgb(97, 62, 18);
+  --media-oxblood: rgb(74, 20, 16);
+  --media-cobalt: rgb(24, 52, 110);
+
+  --scrim-core: rgba(0, 0, 0, 0.68);
+  --scrim-edge: rgba(0, 0, 0, 0);
+
+  --vignette: 0.15;
+  --vignette-tint: 0, 0, 0;
+
+  --muted-on-fluid: #c9c9c9;
+}
+
+/* Theme-invariant deep palette for the echo instance, whose host band is obsidian
+   in BOTH themes — in light theme the theme-scoped --media-* tokens would give it
+   the wrong (lifted) anchors (spec §5.4, §6.3). */
+:root {
+  --media-sage-deep: rgb(43, 74, 51);
+  --media-amber-deep: rgb(97, 62, 18);
+  --media-oxblood-deep: rgb(74, 20, 16);
+  --media-cobalt-deep: rgb(24, 52, 110);
 }
 
 * { box-sizing: border-box; }
@@ -136,8 +184,32 @@ html.boot .boot-overlay { display: flex; }
 .blob-4 { background: radial-gradient(circle at 50% 50%, rgba(160,224,171,0.6) 0%, rgba(255,172,46,0.22) 40%, transparent 70%); top: 40%; left: 50%; }
 :root[data-theme="dark"] .blob { opacity: 0.55; }
 #particles { position: absolute; inset: 0; width: 100%; height: 100%; }
-.cursor-glow { display: none; }
 .grain { display: none; }
+
+/* The fluid canvas. JS-created, so it never exists on the no-JS path; it fades
+   in only once a real frame has been submitted, keeping the blobs as the visible
+   default until then (spec §6.2). No will-change: a canvas repaints its own
+   pixels and is never transformed (spec §8). */
+.fluid-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; transition: opacity 0.6s var(--ease);
+}
+.fluid-canvas.is-live { opacity: 1; }
+
+/* Scrim + vignette. Sits above the wash and below content (which is z-index 2),
+   so it is contained to the hero by the opaque main/footer backgrounds — that
+   dependency is load-bearing (spec §6.7). */
+.fluid-scrim {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    radial-gradient(60% 55% at 50% 42%, var(--scrim-core), var(--scrim-edge) 72%),
+    radial-gradient(120% 120% at 50% 50%, transparent 55%, rgba(var(--vignette-tint), var(--vignette)));
+}
+
+/* The canvas cannot honour system-colour guarantees, so it yields (spec §9). */
+@media (forced-colors: active) {
+  .fluid-canvas, .fluid-echo, .fluid-scrim { display: none; }
+}
 
 /* Layout — wash contained to the hero: main + footer are opaque, hero stays transparent. */
 .hero, main, .footer { position: relative; z-index: 2; }
@@ -257,7 +329,38 @@ h2 {
 .orbit-item svg { width: 34px; height: 34px; color: var(--text); }
 .orbit-item span { font-size: 0.7rem; color: var(--muted); }
 
-/* Signals — one solid readout panel, hairline border, dashed muted dividers. */
+/* Signals — the page's mid-page obsidian band, hosting the quiet echo instance.
+   Scoping the interface tokens inverts every existing readout rule for free
+   rather than restyling each one (spec §6.3). Full-bleed inside the constrained
+   `main` via margin-inline, with body already clipping overflow-x. */
+.signals {
+  position: relative;
+  --bg: #000000; --bg-elev: #000000;
+  --text: #ffffff; --muted: #a8a8a8;
+  --line: rgba(255, 255, 255, 0.35);
+  background: #000000;
+  width: 100%;
+  margin-inline: calc(50% - 50vw);
+  overflow: clip;
+}
+.signals .section-inner { position: relative; z-index: 2; }
+.fluid-echo {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; transition: opacity 0.6s var(--ease);
+}
+.fluid-echo.is-live { opacity: 0.5; }
+
+/* Edge fades: overlay-only, so no box moves and the zero-CLS guarantee holds
+   (spec §6.3). They sit above the echo, below the content. */
+.signals::before,
+.signals::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 64px;
+  z-index: 1; pointer-events: none;
+}
+.signals::before { top: 0; background: linear-gradient(to bottom, var(--page-bg), transparent); }
+.signals::after { bottom: 0; background: linear-gradient(to top, var(--page-bg), transparent); }
+
+/* One solid readout panel, hairline border, dashed muted dividers. */
 .signal-grid {
   background: var(--bg); border: 1px solid var(--line); border-radius: 0;
   overflow: hidden;

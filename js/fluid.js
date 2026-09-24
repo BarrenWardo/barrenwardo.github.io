@@ -545,6 +545,9 @@ class FluidInstance {
       this.warmUp();
     }
     this.status = "ready";
+    /* Fade in only now that a real frame exists, so a broken sim can never be
+     * the reason the hero is empty (spec §6.2). */
+    canvas.classList.add("is-live");
   }
 
   /* Cheap device hint only — the frame-time probe does the real work (§6.10). */
