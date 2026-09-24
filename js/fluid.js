@@ -1042,7 +1042,6 @@ class FluidInstance {
     this.disposeTargets();
     this.resize(true);
     this.seedField(777);
-    this.probeDone = true;
   }
 
   /* Fatal-for-this-instance path: stop stepping, fade out, tell main.js. */
